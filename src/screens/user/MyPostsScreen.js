@@ -102,7 +102,7 @@ const MyPostsScreen = () => {
                 <Card
                   key={post.$id}
                   style={styles.postCard}
-                  onPress={() => navigation.navigate('UserPostDetail', { post })}
+                  onPress={() => navigation.navigate('UserPostDetail', { post, fromMyPosts: true })}
                 >
                   {firstImageId && LISTING_IMAGES_BUCKET_ID ? (
                     <Image

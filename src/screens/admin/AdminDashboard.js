@@ -4,6 +4,9 @@ import {
   StyleSheet,
   ScrollView,
   RefreshControl,
+  Modal,
+  Pressable,
+  Alert,
 } from 'react-native';
 import {
   Card,
@@ -11,11 +14,14 @@ import {
   Button,
   Chip,
   Surface,
+  IconButton,
+  TextInput,
 } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import { useRoute } from '@react-navigation/native';
 import { categoryService } from '../../services/category';
 import AdminBottomNav from '../../components/AdminBottomNav';
+import { locationService } from '../../services/location';
 
 const AdminDashboard = () => {
   const navigation = useNavigation();
@@ -23,14 +29,18 @@ const AdminDashboard = () => {
   const activeTab = route.params?.activeTab || 'main';
   const [refreshing, setRefreshing] = useState(false);
   const [categories, setCategories] = useState([]);
+  const [locationLabel, setLocationLabel] = useState('Locating...');
+  const [locationModalVisible, setLocationModalVisible] = useState(false);
+  const [manualLocationInput, setManualLocationInput] = useState('');
 
   useEffect(() => {
     loadCategories();
+    loadLocation();
   }, []);
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await loadCategories();
+    await Promise.all([loadCategories(), loadLocation()]);
     setRefreshing(false);
   };
 
@@ -41,6 +51,44 @@ const AdminDashboard = () => {
       return;
     }
     setCategories([]);
+  };
+
+  const loadLocation = async () => {
+    const result = await locationService.getPreferredLocationLabel();
+    setLocationLabel(result.location || 'Location unavailable');
+  };
+
+  const openLocationModal = () => {
+    setManualLocationInput(locationLabel === 'Locating...' ? '' : locationLabel);
+    setLocationModalVisible(true);
+  };
+
+  const closeLocationModal = () => {
+    setLocationModalVisible(false);
+  };
+
+  const handleUseCurrentLocation = async () => {
+    await locationService.clearManualLocationLabel();
+    const result = await locationService.getCurrentLocationLabel();
+    setLocationLabel(result.location || 'Location unavailable');
+    closeLocationModal();
+  };
+
+  const handleSaveManualLocation = async () => {
+    const value = manualLocationInput.trim();
+    if (!value) {
+      Alert.alert('Validation', 'Please enter a location.');
+      return;
+    }
+
+    const result = await locationService.setManualLocationLabel(value);
+    if (result.success) {
+      setLocationLabel(result.location);
+      closeLocationModal();
+      return;
+    }
+
+    Alert.alert('Error', result.error || 'Failed to save location.');
   };
 
   const handleUserManagement = () => {
@@ -80,6 +128,22 @@ const AdminDashboard = () => {
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
       >
+      <View style={styles.appHeader}>
+        <Text variant="titleLarge" style={styles.appName}>
+          JorhatX
+        </Text>
+        <View style={styles.locationWrap}>
+          <Text variant="bodySmall" style={styles.locationText} numberOfLines={1}>
+            {locationLabel}
+          </Text>
+          <IconButton
+            icon="map-marker-outline"
+            size={22}
+            style={styles.locationButton}
+            onPress={openLocationModal}
+          />
+        </View>
+      </View>
       <View style={styles.section}>
         <Text variant="titleMedium" style={styles.sectionTitle}>
           Categories
@@ -247,6 +311,31 @@ const AdminDashboard = () => {
       </ScrollView>
 
       <AdminBottomNav activeTab={activeTab} />
+
+      <Modal visible={locationModalVisible} transparent animationType="fade" onRequestClose={closeLocationModal}>
+        <Pressable style={styles.locationOverlay} onPress={closeLocationModal}>
+          <Pressable style={styles.locationModalCard}>
+            <Text variant="titleMedium" style={styles.locationModalTitle}>
+              Set Location
+            </Text>
+            <TextInput
+              mode="outlined"
+              value={manualLocationInput}
+              onChangeText={setManualLocationInput}
+              placeholder="Enter city or area"
+              style={styles.locationInput}
+            />
+            <View style={styles.locationActionRow}>
+              <Button mode="outlined" onPress={handleUseCurrentLocation} style={styles.locationActionButton}>
+                Use Current
+              </Button>
+              <Button mode="contained" onPress={handleSaveManualLocation} style={styles.locationActionButton}>
+                Save
+              </Button>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 };
@@ -261,6 +350,30 @@ const styles = StyleSheet.create({
   },
   contentContainer: {
     paddingBottom: 90,
+  },
+  appHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 10,
+    paddingTop: 10,
+    marginBottom: 6,
+  },
+  appName: {
+    fontWeight: '700',
+    color: '#222',
+  },
+  locationWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    maxWidth: '65%',
+  },
+  locationText: {
+    color: '#444',
+    marginRight: 2,
+  },
+  locationButton: {
+    margin: 0,
   },
   section: {
     backgroundColor: '#fff',
@@ -345,6 +458,31 @@ const styles = StyleSheet.create({
   },
   emptyCategoryText: {
     color: '#666',
+  },
+  locationOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.25)',
+    justifyContent: 'center',
+    paddingHorizontal: 20,
+  },
+  locationModalCard: {
+    backgroundColor: '#fff',
+    borderRadius: 10,
+    padding: 14,
+  },
+  locationModalTitle: {
+    fontWeight: '700',
+    marginBottom: 10,
+  },
+  locationInput: {
+    marginBottom: 12,
+  },
+  locationActionRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  locationActionButton: {
+    width: '48%',
   },
 });
 

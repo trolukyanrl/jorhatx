@@ -9,7 +9,7 @@ import {
   Pressable,
   Animated,
 } from 'react-native';
-import { Searchbar, IconButton, Button, Chip, Card, Text } from 'react-native-paper';
+import { Searchbar, IconButton, Button, Chip, Card, Text, TextInput } from 'react-native-paper';
 import { Query } from 'react-native-appwrite';
 import { useNavigation } from '@react-navigation/native';
 import {
@@ -23,6 +23,7 @@ import { categoryService } from '../../services/category';
 import UserBottomNav from '../../components/UserBottomNav';
 import { authService } from '../../services/auth';
 import { wishlistService } from '../../services/wishlist';
+import { locationService } from '../../services/location';
 
 const UserDashboard = ({ showBottomNav = true }) => {
   const navigation = useNavigation();
@@ -38,6 +39,9 @@ const UserDashboard = ({ showBottomNav = true }) => {
   const [loadingUserPosts, setLoadingUserPosts] = useState(false);
   const [categories, setCategories] = useState([]);
   const [currentUserId, setCurrentUserId] = useState(null);
+  const [locationLabel, setLocationLabel] = useState('Locating...');
+  const [locationModalVisible, setLocationModalVisible] = useState(false);
+  const [manualLocationInput, setManualLocationInput] = useState('');
   const filterSlideAnim = useState(new Animated.Value(-240))[0];
 
   useEffect(() => {
@@ -45,6 +49,7 @@ const UserDashboard = ({ showBottomNav = true }) => {
     loadUserPosts();
     loadCategories();
     loadWishlist();
+    loadLocation();
   }, []);
 
   const loadRecommendedPosts = async () => {
@@ -117,6 +122,44 @@ const UserDashboard = ({ showBottomNav = true }) => {
     setCurrentUserId(userId);
     const ids = await wishlistService.getWishlistIds(userId);
     setWishlistedIds(ids);
+  };
+
+  const loadLocation = async () => {
+    const result = await locationService.getPreferredLocationLabel();
+    setLocationLabel(result.location || 'Location unavailable');
+  };
+
+  const openLocationModal = () => {
+    setManualLocationInput(locationLabel === 'Locating...' ? '' : locationLabel);
+    setLocationModalVisible(true);
+  };
+
+  const closeLocationModal = () => {
+    setLocationModalVisible(false);
+  };
+
+  const handleUseCurrentLocation = async () => {
+    await locationService.clearManualLocationLabel();
+    const result = await locationService.getCurrentLocationLabel();
+    setLocationLabel(result.location || 'Location unavailable');
+    closeLocationModal();
+  };
+
+  const handleSaveManualLocation = async () => {
+    const value = manualLocationInput.trim();
+    if (!value) {
+      Alert.alert('Validation', 'Please enter a location.');
+      return;
+    }
+
+    const result = await locationService.setManualLocationLabel(value);
+    if (result.success) {
+      setLocationLabel(result.location);
+      closeLocationModal();
+      return;
+    }
+
+    Alert.alert('Error', result.error || 'Failed to save location.');
   };
 
   const parseImageIds = (value) => {
@@ -231,12 +274,17 @@ const UserDashboard = ({ showBottomNav = true }) => {
         <Text variant="titleLarge" style={styles.appName}>
           JorhatX
         </Text>
-        <IconButton
-          icon="map-marker-outline"
-          size={22}
-          style={styles.locationButton}
-          onPress={() => Alert.alert('Location', 'Location selection coming soon')}
-        />
+        <View style={styles.locationWrap}>
+          <Text variant="bodySmall" style={styles.locationText} numberOfLines={1}>
+            {locationLabel}
+          </Text>
+          <IconButton
+            icon="map-marker-outline"
+            size={22}
+            style={styles.locationButton}
+            onPress={openLocationModal}
+          />
+        </View>
       </View>
 
       <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
@@ -456,6 +504,31 @@ const UserDashboard = ({ showBottomNav = true }) => {
           <Pressable style={styles.filterBackdrop} onPress={closeFilterPanel} />
         </View>
       </Modal>
+
+      <Modal visible={locationModalVisible} transparent animationType="fade" onRequestClose={closeLocationModal}>
+        <Pressable style={styles.locationOverlay} onPress={closeLocationModal}>
+          <Pressable style={styles.locationModalCard}>
+            <Text variant="titleMedium" style={styles.locationModalTitle}>
+              Set Location
+            </Text>
+            <TextInput
+              mode="outlined"
+              value={manualLocationInput}
+              onChangeText={setManualLocationInput}
+              placeholder="Enter city or area"
+              style={styles.locationInput}
+            />
+            <View style={styles.locationActionRow}>
+              <Button mode="outlined" onPress={handleUseCurrentLocation} style={styles.locationActionButton}>
+                Use Current
+              </Button>
+              <Button mode="contained" onPress={handleSaveManualLocation} style={styles.locationActionButton}>
+                Save
+              </Button>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 };
@@ -482,6 +555,15 @@ const styles = StyleSheet.create({
   appName: {
     fontWeight: '700',
     color: '#222',
+  },
+  locationWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    maxWidth: '65%',
+  },
+  locationText: {
+    color: '#444',
+    marginRight: 2,
   },
   locationButton: {
     margin: 0,
@@ -631,6 +713,31 @@ const styles = StyleSheet.create({
     marginTop: 12,
   },
   filterActionBtn: {
+    width: '48%',
+  },
+  locationOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.25)',
+    justifyContent: 'center',
+    paddingHorizontal: 20,
+  },
+  locationModalCard: {
+    backgroundColor: '#fff',
+    borderRadius: 10,
+    padding: 14,
+  },
+  locationModalTitle: {
+    fontWeight: '700',
+    marginBottom: 10,
+  },
+  locationInput: {
+    marginBottom: 12,
+  },
+  locationActionRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  locationActionButton: {
     width: '48%',
   },
 });

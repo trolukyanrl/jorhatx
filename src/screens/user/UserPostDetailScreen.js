@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { View, StyleSheet, ScrollView, Image, Dimensions, Alert } from 'react-native';
-import { Card, Text, IconButton } from 'react-native-paper';
+import { Avatar, Card, Text, IconButton, Button } from 'react-native-paper';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import {
   databases,
   DATABASE_ID,
   POSTS_COLLECTION_ID,
+  USERS_COLLECTION_ID,
   LISTING_IMAGES_BUCKET_ID,
   getStorageFileViewUrl,
 } from '../../services/appwrite';
@@ -22,6 +23,7 @@ const UserPostDetailScreen = () => {
   const [userRole, setUserRole] = useState('user');
   const [currentUserId, setCurrentUserId] = useState(null);
   const [post, setPost] = useState(initialPost);
+  const [ownerName, setOwnerName] = useState('');
 
   useEffect(() => {
     loadUserInfo();
@@ -52,6 +54,39 @@ const UserPostDetailScreen = () => {
     return [];
   };
 
+  const resolveUserName = async (userId, fallbackName = '') => {
+    const fromPost = (fallbackName || '').trim();
+    if (fromPost) return fromPost;
+    if (!userId) return '';
+    try {
+      const userDoc = await databases.getDocument(DATABASE_ID, USERS_COLLECTION_ID, userId);
+      return (userDoc?.name || userDoc?.email || '').trim();
+    } catch (error) {
+      return '';
+    }
+  };
+
+  const getOwnerFallbackLabel = (userId) => (userId ? `User ${userId.slice(-4)}` : 'User');
+
+  useEffect(() => {
+    let isActive = true;
+
+    const loadOwnerName = async () => {
+      if (!post) {
+        setOwnerName('');
+        return;
+      }
+      const resolved = await resolveUserName(post.createdBy, post.createdByName || '');
+      if (!isActive) return;
+      setOwnerName(resolved || getOwnerFallbackLabel(post.createdBy));
+    };
+
+    loadOwnerName();
+    return () => {
+      isActive = false;
+    };
+  }, [post?.createdBy, post?.createdByName]);
+
   if (!post) {
     return (
       <View style={styles.container}>
@@ -69,6 +104,8 @@ const UserPostDetailScreen = () => {
 
   const imageIds = parseImageIds(post.imageIds);
   const canManagePost = fromMyPosts && !!currentUserId && post.createdBy === currentUserId;
+  const ownerDisplayName = ownerName || getOwnerFallbackLabel(post.createdBy);
+  const ownerInitial = ownerDisplayName.trim().charAt(0).toUpperCase() || 'U';
 
   const handleDelete = () => {
     Alert.alert('Delete Post', 'Are you sure you want to delete this post?', [
@@ -89,10 +126,40 @@ const UserPostDetailScreen = () => {
     ]);
   };
 
+  const handleOpenChat = async () => {
+    if (!post?.createdBy) {
+      Alert.alert('Chat unavailable', 'Post owner is not available for this listing.');
+      return;
+    }
+
+    if (currentUserId && post.createdBy === currentUserId) {
+      Alert.alert('Chat unavailable', 'This is your own post.');
+      return;
+    }
+
+    const sellerName = await resolveUserName(post.createdBy, post.createdByName || '');
+
+    navigation.navigate('ChatConversation', {
+      postId: post.$id,
+      postTitle: post.title || post.name || 'Listing',
+      otherUserId: post.createdBy,
+      otherUserName: sellerName,
+    });
+  };
+
   return (
     <View style={styles.container}>
       <ScrollView style={styles.scrollView} contentContainerStyle={styles.contentContainer}>
         <Card style={styles.card}>
+        <View style={styles.ownerCard}>
+          <Avatar.Text size={36} label={ownerInitial} style={styles.ownerAvatar} labelStyle={styles.ownerAvatarLabel} />
+          <View style={styles.ownerTextWrap}>
+            <Text style={styles.ownerLabel}>Posted by</Text>
+            <Text style={styles.ownerName} numberOfLines={1}>
+              {ownerDisplayName}
+            </Text>
+          </View>
+        </View>
         {imageIds.length > 0 && LISTING_IMAGES_BUCKET_ID ? (
           <ScrollView horizontal pagingEnabled showsHorizontalScrollIndicator={false}>
             {imageIds.map((imageId) => (
@@ -135,6 +202,17 @@ const UserPostDetailScreen = () => {
             {post.pinCode ? <Text style={styles.meta}>PIN Code: {post.pinCode}</Text> : null}
             <Text style={styles.meta}>Description:</Text>
             <Text style={styles.description}>{post.description || 'No description'}</Text>
+
+            {!canManagePost ? (
+              <Button
+                mode="contained"
+                icon="chat-outline"
+                onPress={handleOpenChat}
+                style={styles.chatButton}
+              >
+                Chat with Seller
+              </Button>
+            ) : null}
           </>
         </Card.Content>
         </Card>
@@ -165,6 +243,36 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     overflow: 'hidden',
   },
+  ownerCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#ececec',
+  },
+  ownerAvatar: {
+    backgroundColor: '#4f46e5',
+  },
+  ownerAvatarLabel: {
+    color: '#fff',
+    fontSize: 14,
+  },
+  ownerTextWrap: {
+    marginLeft: 10,
+    flex: 1,
+  },
+  ownerLabel: {
+    color: '#666',
+    fontSize: 11,
+  },
+  ownerName: {
+    marginTop: 1,
+    color: '#222',
+    fontWeight: '700',
+    fontSize: 15,
+  },
   image: {
     height: 220,
     backgroundColor: '#eee',
@@ -181,6 +289,9 @@ const styles = StyleSheet.create({
   description: {
     color: '#444',
     marginTop: 4,
+  },
+  chatButton: {
+    marginTop: 16,
   },
   actionRow: {
     flexDirection: 'row',

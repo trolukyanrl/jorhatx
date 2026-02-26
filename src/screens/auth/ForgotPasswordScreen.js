@@ -106,10 +106,16 @@ const ForgotPasswordScreen = () => {
     }
   };
 
+  const keyboardBehavior = Platform.select({
+    ios: 'padding',
+    android: 'height',
+    default: undefined,
+  });
+
   return (
     <KeyboardAvoidingView
       style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      behavior={keyboardBehavior}
       keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
     >
       <ScrollView contentContainerStyle={styles.scrollContent}>

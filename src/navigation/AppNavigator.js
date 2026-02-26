@@ -22,6 +22,7 @@ import AdminListedItemDetailScreen from '../screens/admin/AdminListedItemDetailS
 import AdminProfileScreen from '../screens/admin/AdminProfileScreen';
 import AdminChatScreen from '../screens/admin/AdminChatScreen';
 import AdminHomeScreen from '../screens/admin/AdminHomeScreen';
+import ChatConversationScreen from '../screens/common/ChatConversationScreen';
 import { authService } from '../services/auth';
 import { AuthContext } from '../context/AuthContext';
 
@@ -164,7 +165,17 @@ const AppNavigator = () => {
                     <Stack.Screen
                       name="AdminChat"
                       component={AdminChatScreen}
-                      options={{}}
+                      options={{
+                        headerTitle: 'Admin Chat',
+                      }}
+                    />
+                    <Stack.Screen
+                      name="ChatConversation"
+                      component={ChatConversationScreen}
+                      options={({ navigation, route }) => ({
+                        animationEnabled: false,
+                        headerTitle: route.params?.otherUserName || 'Conversation',
+                      })}
                     />
                     <Stack.Screen
                       name="Wishlist"
@@ -204,7 +215,16 @@ const AppNavigator = () => {
                       component={ChatScreen}
                       options={{ 
                         animationEnabled: false,
+                        headerTitle: 'Chats',
                       }}
+                    />
+                    <Stack.Screen
+                      name="ChatConversation"
+                      component={ChatConversationScreen}
+                      options={({ navigation, route }) => ({
+                        animationEnabled: false,
+                        headerTitle: route.params?.otherUserName || 'Conversation',
+                      })}
                     />
                     <Stack.Screen 
                       name="Profile" 

@@ -1,10 +1,10 @@
-import React, { useEffect, useState } from 'react';
-import { View, StyleSheet, ScrollView, Alert, Image, Modal, Pressable } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { View, StyleSheet, ScrollView, Alert, Image, Modal, Pressable, Platform } from 'react-native';
 import { Card, Text, TextInput, Button, Chip, IconButton } from 'react-native-paper';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
 import { ID } from 'react-native-appwrite';
-import MapView, { Marker } from 'react-native-maps';
+import MapView, { Marker } from '../../components/MapViewAdapter';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import {
   databases,
@@ -41,12 +41,14 @@ const UserCreateListingScreen = () => {
   const [pinCode, setPinCode] = useState('');
   const [existingImageIds, setExistingImageIds] = useState([]);
   const [selectedCoords, setSelectedCoords] = useState(null);
+  const [locating, setLocating] = useState(false);
   const [mapRegion, setMapRegion] = useState({
     latitude: 26.7509,
     longitude: 94.2037,
     latitudeDelta: 0.08,
     longitudeDelta: 0.08,
   });
+  const mapRef = useRef(null);
 
   useEffect(() => {
     loadCategories();
@@ -157,33 +159,67 @@ const UserCreateListingScreen = () => {
     }
   };
 
-  const openLocationModal = async () => {
-    setLocationModalVisible(true);
-    const permission = await Location.requestForegroundPermissionsAsync();
-    if (permission.status !== 'granted') {
-      return;
-    }
-
+  const getCurrentCoords = async () => {
     try {
-      const current = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.Balanced,
-      });
-      const latitude = current.coords.latitude;
-      const longitude = current.coords.longitude;
-      setMapRegion((prev) => ({
-        ...prev,
-        latitude,
-        longitude,
-      }));
-      if (!selectedCoords) {
-        setSelectedCoords({ latitude, longitude });
-      }
-      if (!location.trim()) {
-        const label = await reverseGeocodeToLabel(latitude, longitude);
-        if (label) setLocation(label);
+      const lastKnown = await Location.getLastKnownPositionAsync();
+      if (lastKnown?.coords) {
+        return lastKnown.coords;
       }
     } catch (error) {
-      // Keep default region if GPS fetch fails.
+      // Ignore and fallback to active GPS call.
+    }
+
+    const current = await Location.getCurrentPositionAsync({
+      accuracy: Location.Accuracy.Balanced,
+      mayShowUserSettingsDialog: true,
+    });
+    return current?.coords || null;
+  };
+
+  const openLocationModal = async () => {
+    setLocationModalVisible(true);
+    setLocating(true);
+    try {
+      const permission = await Location.requestForegroundPermissionsAsync();
+      if (permission.status !== 'granted') {
+        Alert.alert('Permission Needed', 'Please allow location permission.');
+        return;
+      }
+
+      if (Platform.OS === 'android') {
+        try {
+          await Location.enableNetworkProviderAsync();
+        } catch (error) {
+          // Continue even when provider prompt is skipped.
+        }
+      }
+
+      const coords = await getCurrentCoords();
+      if (!coords) {
+        Alert.alert('Location', 'Unable to detect current location. Please tap on map.');
+        return;
+      }
+
+      const nextRegion = {
+        latitude: coords.latitude,
+        longitude: coords.longitude,
+        latitudeDelta: 0.01,
+        longitudeDelta: 0.01,
+      };
+      setMapRegion(nextRegion);
+      setSelectedCoords({ latitude: coords.latitude, longitude: coords.longitude });
+      mapRef.current?.animateToRegion(nextRegion, 350);
+
+      if (!location.trim()) {
+        const label = await reverseGeocodeToLabel(coords.latitude, coords.longitude);
+        if (label) {
+          setLocation(label);
+        }
+      }
+    } catch (error) {
+      Alert.alert('Location', 'Unable to detect current location. Please tap on map.');
+    } finally {
+      setLocating(false);
     }
   };
 
@@ -332,6 +368,8 @@ const UserCreateListingScreen = () => {
     }
   };
 
+  const addressPreview = buildAddressLabel();
+
   return (
     <View style={styles.container}>
       <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
@@ -361,6 +399,11 @@ const UserCreateListingScreen = () => {
             <Button mode="outlined" icon="map-marker-outline" onPress={openLocationModal} style={styles.input}>
               Select Location
             </Button>
+            {!!location && (
+              <Text variant="bodySmall" style={styles.selectedLocationText}>
+                Selected location: {location}
+              </Text>
+            )}
             <Button
               mode="outlined"
               icon="home-map-marker"
@@ -369,6 +412,11 @@ const UserCreateListingScreen = () => {
             >
               Add Address
             </Button>
+            {!!addressPreview && (
+              <Text variant="bodySmall" style={styles.selectedAddressText}>
+                Selected address: {addressPreview}
+              </Text>
+            )}
 
             {showAddressFields ? (
               <View style={styles.addressBox}>
@@ -408,27 +456,8 @@ const UserCreateListingScreen = () => {
                   onChangeText={setPinCode}
                   style={styles.input}
                 />
-                <Button
-                  mode="contained-tonal"
-                  onPress={() => {
-                    const address = buildAddressLabel();
-                    if (!address) {
-                      Alert.alert('Validation', 'Please fill address fields.');
-                      return;
-                    }
-                    setLocation(address);
-                  }}
-                  style={styles.input}
-                >
-                  Use Address as Location
-                </Button>
               </View>
             ) : null}
-            {!!location && (
-              <Text variant="bodySmall" style={styles.selectedLocationText}>
-                Selected: {location}
-              </Text>
-            )}
 
             <Text variant="bodySmall" style={styles.categoryLabel}>
               Select Category
@@ -541,11 +570,14 @@ const UserCreateListingScreen = () => {
               </Text>
               <IconButton icon="close" onPress={() => setLocationModalVisible(false)} />
             </View>
+            {locating ? (
+              <Text style={styles.locationHint}>Detecting current location...</Text>
+            ) : null}
 
             <MapView
+              ref={mapRef}
               style={styles.map}
-              region={mapRegion}
-              onRegionChangeComplete={setMapRegion}
+              initialRegion={mapRegion}
               onPress={onMapPress}
             >
               {selectedCoords ? <Marker coordinate={selectedCoords} /> : null}
@@ -553,7 +585,7 @@ const UserCreateListingScreen = () => {
 
             <TextInput
               mode="outlined"
-              label="Address (manual)"
+              label="Location (manual)"
               value={location}
               onChangeText={setLocation}
               style={styles.locationManualInput}
@@ -639,6 +671,12 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
   },
   selectedLocationText: {
+    marginTop: -6,
+    marginBottom: 10,
+    color: '#444',
+  },
+  selectedAddressText: {
+    marginTop: -6,
     marginBottom: 10,
     color: '#444',
   },
@@ -666,6 +704,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     marginBottom: 6,
+  },
+  locationHint: {
+    marginBottom: 6,
+    color: '#666',
   },
   map: {
     width: '100%',

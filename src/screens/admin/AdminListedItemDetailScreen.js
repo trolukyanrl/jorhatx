@@ -1,14 +1,16 @@
 import React, { useEffect, useState } from 'react';
 import { View, StyleSheet, ScrollView, Image, Alert, Dimensions } from 'react-native';
-import { Card, Text, Button, TextInput, Chip } from 'react-native-paper';
+import { Avatar, Card, Text, Button, TextInput, Chip } from 'react-native-paper';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import {
   databases,
   DATABASE_ID,
   POSTS_COLLECTION_ID,
+  USERS_COLLECTION_ID,
   LISTING_IMAGES_BUCKET_ID,
   getStorageFileViewUrl,
 } from '../../services/appwrite';
+import { authService } from '../../services/auth';
 import AdminBottomNav from '../../components/AdminBottomNav';
 
 const AdminListedItemDetailScreen = () => {
@@ -26,10 +28,16 @@ const AdminListedItemDetailScreen = () => {
   const [description, setDescription] = useState('');
   const [saving, setSaving] = useState(false);
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
+  const [currentUserId, setCurrentUserId] = useState(null);
+  const [ownerName, setOwnerName] = useState('');
 
   useEffect(() => {
     loadItem();
   }, [itemId]);
+
+  useEffect(() => {
+    loadCurrentUser();
+  }, []);
 
   const parseImageIds = (value) => {
     if (!value) return [];
@@ -64,6 +72,11 @@ const AdminListedItemDetailScreen = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  const loadCurrentUser = async () => {
+    const user = await authService.getCurrentUser();
+    setCurrentUserId(user?.$id || null);
   };
 
   const handleSave = async () => {
@@ -130,6 +143,60 @@ const AdminListedItemDetailScreen = () => {
     );
   };
 
+  const resolveUserName = async (userId, fallbackName = '') => {
+    const fromPost = (fallbackName || '').trim();
+    if (fromPost) return fromPost;
+    if (!userId) return '';
+    try {
+      const userDoc = await databases.getDocument(DATABASE_ID, USERS_COLLECTION_ID, userId);
+      return (userDoc?.name || userDoc?.email || '').trim();
+    } catch (error) {
+      return '';
+    }
+  };
+
+  const getOwnerFallbackLabel = (userId) => (userId ? `User ${userId.slice(-4)}` : 'User');
+
+  useEffect(() => {
+    let isActive = true;
+
+    const loadOwnerName = async () => {
+      if (!item) {
+        setOwnerName('');
+        return;
+      }
+      const resolved = await resolveUserName(item.createdBy, item.createdByName || '');
+      if (!isActive) return;
+      setOwnerName(resolved || getOwnerFallbackLabel(item.createdBy));
+    };
+
+    loadOwnerName();
+    return () => {
+      isActive = false;
+    };
+  }, [item?.createdBy, item?.createdByName]);
+
+  const handleOpenChat = async () => {
+    if (!item?.createdBy) {
+      Alert.alert('Chat unavailable', 'Post owner is not available for this listing.');
+      return;
+    }
+
+    if (currentUserId && item.createdBy === currentUserId) {
+      Alert.alert('Chat unavailable', 'This is your own post.');
+      return;
+    }
+
+    const sellerName = await resolveUserName(item.createdBy, item.createdByName || '');
+
+    navigation.navigate('ChatConversation', {
+      postId: item.$id,
+      postTitle: item.title || 'Listing',
+      otherUserId: item.createdBy,
+      otherUserName: sellerName,
+    });
+  };
+
   if (loading) {
     return (
       <View style={styles.container}>
@@ -153,11 +220,22 @@ const AdminListedItemDetailScreen = () => {
   }
 
   const imageIds = parseImageIds(item.imageIds);
+  const ownerDisplayName = ownerName || getOwnerFallbackLabel(item.createdBy);
+  const ownerInitial = ownerDisplayName.trim().charAt(0).toUpperCase() || 'U';
 
   return (
     <View style={styles.container}>
       <ScrollView style={styles.scrollView} contentContainerStyle={styles.contentContainer}>
         <Card style={styles.card}>
+        <View style={styles.ownerCard}>
+          <Avatar.Text size={36} label={ownerInitial} style={styles.ownerAvatar} labelStyle={styles.ownerAvatarLabel} />
+          <View style={styles.ownerTextWrap}>
+            <Text style={styles.ownerLabel}>Posted by</Text>
+            <Text style={styles.ownerName} numberOfLines={1}>
+              {ownerDisplayName}
+            </Text>
+          </View>
+        </View>
         {imageIds.length > 0 && LISTING_IMAGES_BUCKET_ID ? (
           <ScrollView
             horizontal
@@ -263,7 +341,11 @@ const AdminListedItemDetailScreen = () => {
               </>
             ) : (
               <>
-                <Button mode="contained" onPress={() => setIsEditing(true)} icon="pencil-outline">
+                <Button
+                  mode="contained"
+                  onPress={() => navigation.navigate('AdminCreateListing', { editPost: item })}
+                  icon="pencil-outline"
+                >
                   Edit
                 </Button>
                 <Button mode="contained" onPress={handleDelete} buttonColor="#d32f2f" icon="delete-outline">
@@ -272,6 +354,11 @@ const AdminListedItemDetailScreen = () => {
               </>
             )}
           </View>
+          {!isEditing ? (
+            <Button mode="contained" icon="chat-outline" onPress={handleOpenChat} style={styles.chatButton}>
+              Chat with Seller
+            </Button>
+          ) : null}
         </Card.Content>
         </Card>
       </ScrollView>
@@ -295,6 +382,36 @@ const styles = StyleSheet.create({
   card: {
     borderRadius: 10,
     overflow: 'hidden',
+  },
+  ownerCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#ececec',
+  },
+  ownerAvatar: {
+    backgroundColor: '#4f46e5',
+  },
+  ownerAvatarLabel: {
+    color: '#fff',
+    fontSize: 14,
+  },
+  ownerTextWrap: {
+    marginLeft: 10,
+    flex: 1,
+  },
+  ownerLabel: {
+    color: '#666',
+    fontSize: 11,
+  },
+  ownerName: {
+    marginTop: 1,
+    color: '#222',
+    fontWeight: '700',
+    fontSize: 15,
   },
   imageCarousel: {
     width: '100%',
@@ -350,6 +467,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     marginTop: 16,
+  },
+  chatButton: {
+    marginTop: 12,
   },
   center: {
     flex: 1,

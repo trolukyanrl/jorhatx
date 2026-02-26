@@ -9,6 +9,12 @@ config.resolver.resolverMainFields = ['react-native', 'browser', 'main'];
 const originalResolveRequest = config.resolver.resolveRequest;
 config.resolver.resolveRequest = (context, moduleName, platform) => {
   if (moduleName === 'react-native-maps') {
+    if (platform === 'web') {
+      return {
+        type: 'sourceFile',
+        filePath: path.resolve(__dirname, 'src/shims/react-native-maps.web.js'),
+      };
+    }
     return {
       type: 'sourceFile',
       filePath: path.resolve(__dirname, 'node_modules/react-native-maps/lib/index.js'),

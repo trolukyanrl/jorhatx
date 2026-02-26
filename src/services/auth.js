@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { account, databases, functions, DATABASE_ID, USERS_COLLECTION_ID } from './appwrite';
-import { ID } from 'react-native-appwrite';
+import { ID, Query } from 'react-native-appwrite';
 
 // Storage keys
 const STORAGE_KEYS = {
@@ -91,6 +91,8 @@ export const authService = {
         USERS_COLLECTION_ID,
         user.$id,
         {
+          name,
+          email,
           role: 'user',
           banned: false,
         }
@@ -308,6 +310,22 @@ export const authService = {
     } catch (error) {
       console.error('Check ban status error:', error);
       return false;
+    }
+  },
+
+  // Get all registered users (admin)
+  async getRegisteredUsers() {
+    try {
+      const result = await databases.listDocuments(
+        DATABASE_ID,
+        USERS_COLLECTION_ID,
+        [Query.orderDesc('$createdAt'), Query.limit(100)]
+      );
+
+      return { success: true, users: result.documents || [] };
+    } catch (error) {
+      console.error('Get registered users error:', error);
+      return { success: false, users: [], error: error.message };
     }
   },
 

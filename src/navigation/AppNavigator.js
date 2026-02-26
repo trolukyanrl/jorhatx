@@ -1,13 +1,27 @@
 import React, { useState, useEffect } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
-import { Provider as PaperProvider, Button } from 'react-native-paper';
+import { Provider as PaperProvider } from 'react-native-paper';
 import LoginScreen from '../screens/auth/LoginScreen';
 import RegisterScreen from '../screens/auth/RegisterScreen';
 import ForgotPasswordScreen from '../screens/auth/ForgotPasswordScreen';
 import VerifyOtpScreen from '../screens/auth/VerifyOtpScreen';
 import UserDashboard from '../screens/user/UserDashboard';
+import ChatScreen from '../screens/user/ChatScreen';
+import ProfileScreen from '../screens/user/ProfileScreen';
+import UserCreateListingScreen from '../screens/user/UserCreateListingScreen';
+import WishlistScreen from '../screens/user/WishlistScreen';
+import UserPostDetailScreen from '../screens/user/UserPostDetailScreen';
+import MyPostsScreen from '../screens/user/MyPostsScreen';
 import AdminDashboard from '../screens/admin/AdminDashboard';
+import UserManagementScreen from '../screens/admin/UserManagementScreen';
+import CategoryManagementScreen from '../screens/admin/CategoryManagementScreen';
+import AdminCreateListingScreen from '../screens/admin/AdminCreateListingScreen';
+import AdminListedItemsScreen from '../screens/admin/AdminListedItemsScreen';
+import AdminListedItemDetailScreen from '../screens/admin/AdminListedItemDetailScreen';
+import AdminProfileScreen from '../screens/admin/AdminProfileScreen';
+import AdminChatScreen from '../screens/admin/AdminChatScreen';
+import AdminHomeScreen from '../screens/admin/AdminHomeScreen';
 import { authService } from '../services/auth';
 import { AuthContext } from '../context/AuthContext';
 
@@ -51,6 +65,7 @@ const AppNavigator = () => {
       setIsAuthenticated(false);
       setUserRole(null);
     }
+    return result;
   };
 
   if (isLoading) {
@@ -65,10 +80,14 @@ const AppNavigator = () => {
             screenOptions={{
               headerStyle: {
                 backgroundColor: '#6200ea',
+                height: 40,
               },
               headerTintColor: '#fff',
+              headerTitle: '',
+              headerLeft: () => null,
               headerTitleStyle: {
                 fontWeight: 'bold',
+                fontSize: 18,
               },
             }}
           >
@@ -101,39 +120,129 @@ const AppNavigator = () => {
             ) : (
               <>
                 {userRole === 'admin' ? (
-                  <Stack.Screen 
-                    name="AdminDashboard" 
-                    component={AdminDashboard}
-                    options={{ 
-                      title: 'Admin Dashboard',
-                      headerRight: () => (
-                        <Button 
-                          mode="text" 
-                          onPress={handleLogout}
-                          labelStyle={{ color: '#fff' }}
-                        >
-                          Logout
-                        </Button>
-                      )
-                    }}
-                  />
+                  <>
+                    <Stack.Screen 
+                      name="AdminHome" 
+                      component={AdminHomeScreen}
+                      options={{}}
+                    />
+                    <Stack.Screen 
+                      name="AdminDashboard" 
+                      component={AdminDashboard}
+                      options={{}}
+                    />
+                    <Stack.Screen
+                      name="UserManagement"
+                      component={UserManagementScreen}
+                      options={{}}
+                    />
+                    <Stack.Screen
+                      name="CategoryManagement"
+                      component={CategoryManagementScreen}
+                      options={{}}
+                    />
+                    <Stack.Screen
+                      name="AdminCreateListing"
+                      component={AdminCreateListingScreen}
+                      options={{}}
+                    />
+                    <Stack.Screen
+                      name="AdminListedItems"
+                      component={AdminListedItemsScreen}
+                      options={{}}
+                    />
+                    <Stack.Screen
+                      name="AdminListedItemDetail"
+                      component={AdminListedItemDetailScreen}
+                      options={{}}
+                    />
+                    <Stack.Screen
+                      name="AdminProfile"
+                      component={AdminProfileScreen}
+                      options={{}}
+                    />
+                    <Stack.Screen
+                      name="AdminChat"
+                      component={AdminChatScreen}
+                      options={{}}
+                    />
+                    <Stack.Screen
+                      name="Wishlist"
+                      component={WishlistScreen}
+                      options={{
+                        animationEnabled: false,
+                      }}
+                    />
+                    <Stack.Screen
+                      name="UserPostDetail"
+                      component={UserPostDetailScreen}
+                      options={{
+                        animationEnabled: false,
+                        headerLeft: () => null,
+                      }}
+                    />
+                  </>
                 ) : (
-                  <Stack.Screen 
-                    name="UserDashboard" 
-                    component={UserDashboard}
-                    options={{ 
-                      title: 'User Dashboard',
-                      headerRight: () => (
-                        <Button 
-                          mode="text" 
-                          onPress={handleLogout}
-                          labelStyle={{ color: '#fff' }}
-                        >
-                          Logout
-                        </Button>
-                      )
-                    }}
-                  />
+                  <>
+                    <Stack.Screen 
+                      name="UserDashboard" 
+                      component={UserDashboard}
+                      options={{ 
+                        animationEnabled: false,
+                        headerStyle: {
+                          backgroundColor: '#6200ea',
+                          height: 40,
+                        },
+                        headerTitleStyle: {
+                          fontWeight: 'bold',
+                          fontSize: 18,
+                        },
+                      }}
+                    />
+                    <Stack.Screen 
+                      name="Chat" 
+                      component={ChatScreen}
+                      options={{ 
+                        animationEnabled: false,
+                      }}
+                    />
+                    <Stack.Screen 
+                      name="Profile" 
+                      component={ProfileScreen}
+                      options={{ 
+                        animationEnabled: false,
+                      }}
+                    />
+                    <Stack.Screen 
+                      name="CreateListing" 
+                      component={UserCreateListingScreen}
+                      options={{ 
+                        animationEnabled: false,
+                      }}
+                    />
+                    <Stack.Screen 
+                      name="Wishlist" 
+                      component={WishlistScreen}
+                      options={{ 
+                        animationEnabled: false,
+                      }}
+                    />
+                    <Stack.Screen 
+                      name="UserPostDetail" 
+                      component={UserPostDetailScreen}
+                      options={{ 
+                        animationEnabled: false,
+                        headerLeft: () => null,
+                      }}
+                    />
+                    <Stack.Screen 
+                      name="MyPosts" 
+                      component={MyPostsScreen}
+                      options={{ 
+                        animationEnabled: false,
+                      }}
+                    />
+                  </>
                 )}
               </>
             )}

@@ -1,236 +1,462 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   StyleSheet,
   Alert,
   ScrollView,
-  RefreshControl,
+  Image,
+  Modal,
+  Pressable,
+  Animated,
 } from 'react-native';
-import {
-  Card,
-  Text,
-  Button,
-  Avatar,
-  Chip,
-  List,
-  FAB,
-} from 'react-native-paper';
-import { authService } from '../../services/auth';
+import { Searchbar, IconButton, Button, Chip, Card, Text } from 'react-native-paper';
+import { Query } from 'react-native-appwrite';
 import { useNavigation } from '@react-navigation/native';
+import {
+  databases,
+  DATABASE_ID,
+  POSTS_COLLECTION_ID,
+  LISTING_IMAGES_BUCKET_ID,
+  getStorageFileViewUrl,
+} from '../../services/appwrite';
+import { categoryService } from '../../services/category';
+import UserBottomNav from '../../components/UserBottomNav';
+import { authService } from '../../services/auth';
+import { wishlistService } from '../../services/wishlist';
 
-const UserDashboard = () => {
+const UserDashboard = ({ showBottomNav = true }) => {
   const navigation = useNavigation();
-  const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [activeCategory, setActiveCategory] = useState('all');
+  const [sortBy, setSortBy] = useState('none');
+  const [maxPrice, setMaxPrice] = useState(null);
+  const [filterVisible, setFilterVisible] = useState(false);
+  const [wishlistedIds, setWishlistedIds] = useState([]);
+  const [recommendedPosts, setRecommendedPosts] = useState([]);
+  const [userListedPosts, setUserListedPosts] = useState([]);
+  const [loadingRecommendations, setLoadingRecommendations] = useState(false);
+  const [loadingUserPosts, setLoadingUserPosts] = useState(false);
+  const [categories, setCategories] = useState([]);
+  const [currentUserId, setCurrentUserId] = useState(null);
+  const filterSlideAnim = useState(new Animated.Value(-240))[0];
 
   useEffect(() => {
-    loadUserData();
+    loadRecommendedPosts();
+    loadUserPosts();
+    loadCategories();
+    loadWishlist();
   }, []);
 
-  const loadUserData = async () => {
+  const loadRecommendedPosts = async () => {
+    if (!POSTS_COLLECTION_ID) {
+      setRecommendedPosts([]);
+      return;
+    }
+
+    setLoadingRecommendations(true);
     try {
-      const userData = await authService.getCurrentUser();
-      setUser(userData);
+      const response = await databases.listDocuments(
+        DATABASE_ID,
+        POSTS_COLLECTION_ID,
+        [Query.orderDesc('$createdAt'), Query.limit(20)]
+      );
+
+      const adminPosts = response.documents.filter(
+        (post) =>
+          post.role === 'admin' ||
+          post.authorRole === 'admin' ||
+          post.postedByRole === 'admin' ||
+          post.createdByRole === 'admin' ||
+          post.isAdminPost === true
+      );
+
+      setRecommendedPosts(adminPosts);
     } catch (error) {
-      console.error('Error loading user data:', error);
+      console.error('Failed to load recommended posts:', error);
+      setRecommendedPosts([]);
+    } finally {
+      setLoadingRecommendations(false);
     }
   };
 
-  const onRefresh = async () => {
-    setRefreshing(true);
-    await loadUserData();
-    setRefreshing(false);
+  const loadCategories = async () => {
+    const result = await categoryService.getCategories();
+    if (result.success) {
+      setCategories(result.categories);
+      return;
+    }
+
+    setCategories([]);
   };
 
-  const handleLogout = async () => {
-    Alert.alert(
-      'Logout',
-      'Are you sure you want to logout?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Logout',
-          style: 'destructive',
-          onPress: async () => {
-            const result = await authService.logout();
-            if (result.success) {
-              navigation.replace('Login');
-            } else {
-              Alert.alert('Error', 'Failed to logout. Please try again.');
-            }
-          },
-        },
-      ]
-    );
+  const loadUserPosts = async () => {
+    if (!POSTS_COLLECTION_ID) {
+      setUserListedPosts([]);
+      return;
+    }
+
+    setLoadingUserPosts(true);
+    try {
+      const response = await databases.listDocuments(
+        DATABASE_ID,
+        POSTS_COLLECTION_ID,
+        [Query.orderDesc('$createdAt'), Query.limit(100)]
+      );
+      setUserListedPosts(response.documents || []);
+    } catch (error) {
+      console.error('Failed to load user listed posts:', error);
+      setUserListedPosts([]);
+    } finally {
+      setLoadingUserPosts(false);
+    }
   };
 
-  const handleProfile = () => {
-    navigation.navigate('Profile');
+  const loadWishlist = async () => {
+    const currentUser = await authService.getCurrentUser();
+    const userId = currentUser?.$id || null;
+    setCurrentUserId(userId);
+    const ids = await wishlistService.getWishlistIds(userId);
+    setWishlistedIds(ids);
   };
 
-  const handleListings = () => {
-    navigation.navigate('MyListings');
+  const parseImageIds = (value) => {
+    if (!value) return [];
+    if (Array.isArray(value)) return value;
+    if (typeof value === 'string') {
+      try {
+        const parsed = JSON.parse(value);
+        return Array.isArray(parsed) ? parsed : [];
+      } catch (error) {
+        return [];
+      }
+    }
+    return [];
   };
 
-  const handleCategories = () => {
-    navigation.navigate('Categories');
+  const matchesFilters = (post) => {
+    const query = searchQuery.trim().toLowerCase();
+    const postCategory = (post.category || post.type || '').toString().toLowerCase();
+    const matchesCategory =
+      activeCategory === 'all' || postCategory === activeCategory.toLowerCase();
+    const numericPrice = Number(post.price || 0);
+    const matchesPrice = maxPrice == null || (!Number.isNaN(numericPrice) && numericPrice <= maxPrice);
+
+    if (!query) return matchesCategory && matchesPrice;
+
+    const searchable = [
+      post.title,
+      post.name,
+      post.category,
+      post.type,
+      post.description,
+      post.price?.toString(),
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+
+    return matchesCategory && matchesPrice && searchable.includes(query);
   };
 
-  if (!user) {
+  const applySort = (posts) => {
+    const sorted = [...posts];
+    if (sortBy === 'price_low_high') {
+      sorted.sort((a, b) => Number(a.price || 0) - Number(b.price || 0));
+    } else if (sortBy === 'price_high_low') {
+      sorted.sort((a, b) => Number(b.price || 0) - Number(a.price || 0));
+    }
+    return sorted;
+  };
+
+  const filteredRecommendedPosts = applySort(recommendedPosts.filter(matchesFilters));
+  const filteredUserPosts = applySort(userListedPosts.filter(matchesFilters));
+
+  const isWishlisted = (postId) => wishlistedIds.includes(postId);
+
+  const toggleWishlist = async (postId) => {
+    const updated = await wishlistService.toggleWishlist(currentUserId, postId);
+    setWishlistedIds(updated);
+  };
+
+  const renderPostImage = (post) => {
+    const imageIds = parseImageIds(post.imageIds);
+    const firstImageId = imageIds[0];
+    if (!firstImageId || !LISTING_IMAGES_BUCKET_ID) return null;
+
     return (
-      <View style={styles.container}>
-        <Card style={styles.loadingCard}>
-          <Card.Content>
-            <Text variant="titleLarge" style={styles.loadingText}>
-              Loading...
-            </Text>
-          </Card.Content>
-        </Card>
+      <View style={styles.postImageWrap}>
+        <Image
+          source={{
+            uri: getStorageFileViewUrl(LISTING_IMAGES_BUCKET_ID, firstImageId),
+          }}
+          style={styles.postImage}
+        />
+        <IconButton
+          icon={isWishlisted(post.$id) ? 'heart' : 'heart-outline'}
+          iconColor={isWishlisted(post.$id) ? '#e53935' : '#fff'}
+          size={20}
+          style={styles.wishlistIcon}
+          onPress={() => toggleWishlist(post.$id)}
+        />
       </View>
     );
-  }
+  };
+
+  const openFilterPanel = () => {
+    setFilterVisible(true);
+    Animated.timing(filterSlideAnim, {
+      toValue: 0,
+      duration: 220,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  const closeFilterPanel = () => {
+    Animated.timing(filterSlideAnim, {
+      toValue: -240,
+      duration: 200,
+      useNativeDriver: true,
+    }).start(() => setFilterVisible(false));
+  };
+
+  const clearFilters = () => {
+    setSortBy('none');
+    setMaxPrice(null);
+    closeFilterPanel();
+  };
 
   return (
-    <ScrollView
-      style={styles.container}
-      refreshControl={
-        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-      }
-    >
-      {/* Welcome Section */}
-      <View style={styles.welcomeSection}>
-        <Avatar.Text size={64} label={`${user.name?.charAt(0) || 'U'}`} />
-        <View style={styles.welcomeText}>
-          <Text variant="titleLarge" style={styles.userName}>
-            Welcome, {user.name || 'User'}
+    <View style={styles.container}>
+      <View style={styles.appHeader}>
+        <Text variant="titleLarge" style={styles.appName}>
+          JorhatX
+        </Text>
+        <IconButton
+          icon="map-marker-outline"
+          size={22}
+          style={styles.locationButton}
+          onPress={() => Alert.alert('Location', 'Location selection coming soon')}
+        />
+      </View>
+
+      <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
+        <View style={styles.topBar}>
+          <Searchbar
+            placeholder="Search products, categories..."
+            onChangeText={setSearchQuery}
+            value={searchQuery}
+            style={styles.searchBar}
+          />
+          <IconButton
+            icon="heart-outline"
+            size={22}
+            style={styles.topIconButton}
+            onPress={() => navigation.navigate('Wishlist')}
+          />
+          <IconButton
+            icon="bell-outline"
+            size={22}
+            style={styles.topIconButton}
+            onPress={() => Alert.alert('Notifications', 'Notifications page coming soon')}
+          />
+        </View>
+
+        <View style={styles.categoryRow}>
+          <IconButton
+            icon="filter-variant"
+            size={22}
+            style={styles.filterButton}
+            onPress={openFilterPanel}
+          />
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.categoryList}
+          >
+            <Button
+              mode="contained"
+              icon="view-grid-outline"
+              style={styles.categoryButton}
+              onPress={() => setActiveCategory('all')}
+            >
+              Category
+            </Button>
+            {categories.map((item) => (
+              <Chip
+                key={item.$id || item.name}
+                mode={activeCategory === item.name ? 'flat' : 'outlined'}
+                selected={activeCategory === item.name}
+                icon="tag-outline"
+                style={[
+                  styles.categoryChip,
+                  activeCategory === item.name && styles.selectedCategoryChip,
+                ]}
+                onPress={() => setActiveCategory(item.name)}
+              >
+                {item.name}
+              </Chip>
+            ))}
+          </ScrollView>
+        </View>
+
+        <View style={styles.recommendedSection}>
+          <Text variant="titleMedium" style={styles.sectionTitle}>
+            Suggested for You
           </Text>
-          <Text variant="bodyMedium" style={styles.userEmail}>
-            {user.email}
+
+          {loadingRecommendations ? (
+            <Card style={styles.emptyCard}>
+              <Card.Content>
+                <Text>Loading recommendations...</Text>
+              </Card.Content>
+            </Card>
+          ) : filteredRecommendedPosts.length === 0 ? (
+            <Card style={styles.emptyCard}>
+              <Card.Content>
+                <Text style={styles.emptyTitle}>No matching admin posts</Text>
+                <Text variant="bodySmall" style={styles.emptyText}>
+                  Try a different search or category.
+                </Text>
+              </Card.Content>
+            </Card>
+          ) : (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.recommendedList}
+            >
+              {filteredRecommendedPosts.map((post) => (
+                <Card
+                  key={post.$id}
+                  style={styles.postCard}
+                  onPress={() => navigation.navigate('UserPostDetail', { post })}
+                >
+                  {renderPostImage(post)}
+                  <Card.Content>
+                    <Text variant="titleSmall" style={styles.postTitle}>
+                      {post.title || post.name || 'Untitled Post'}
+                    </Text>
+                    <Text variant="bodySmall" style={styles.postMeta}>
+                      {(post.category || post.type || 'General').toString()}
+                      {post.price ? ` | Rs. ${post.price}` : ''}
+                    </Text>
+                  </Card.Content>
+                </Card>
+              ))}
+            </ScrollView>
+          )}
+        </View>
+
+        <View style={styles.recommendedSection}>
+          <Text variant="titleMedium" style={styles.sectionTitle}>
+            Newly Added Posts
           </Text>
-          <Chip icon="shield-check" style={styles.userRole}>
-            User
-          </Chip>
+
+          {loadingUserPosts ? (
+            <Card style={styles.emptyCard}>
+              <Card.Content>
+                <Text>Loading user listings...</Text>
+              </Card.Content>
+            </Card>
+          ) : filteredUserPosts.length === 0 ? (
+            <Card style={styles.emptyCard}>
+              <Card.Content>
+                <Text style={styles.emptyTitle}>No matching user listings</Text>
+                <Text variant="bodySmall" style={styles.emptyText}>
+                  Try a different search or category.
+                </Text>
+              </Card.Content>
+            </Card>
+          ) : (
+            <View style={styles.userGrid}>
+              {filteredUserPosts.map((post) => (
+                <Card
+                  key={post.$id}
+                  style={styles.userPostCard}
+                  onPress={() => navigation.navigate('UserPostDetail', { post })}
+                >
+                  {renderPostImage(post)}
+                  <Card.Content>
+                    <Text variant="titleSmall" style={styles.postTitle}>
+                      {post.title || post.name || 'Untitled Post'}
+                    </Text>
+                    <Text variant="bodySmall" style={styles.postMeta}>
+                      {(post.category || post.type || 'General').toString()}
+                      {post.price ? ` | Rs. ${post.price}` : ''}
+                    </Text>
+                  </Card.Content>
+                </Card>
+              ))}
+            </View>
+          )}
         </View>
-      </View>
+      </ScrollView>
 
-      {/* Quick Actions */}
-      <View style={styles.section}>
-        <Text variant="titleMedium" style={styles.sectionTitle}>
-          Quick Actions
-        </Text>
-        <View style={styles.actionButtons}>
-          <Button
-            mode="contained"
-            onPress={handleListings}
-            style={styles.actionButton}
-            icon="format-list-bulleted"
-          >
-            My Listings
-          </Button>
-          <Button
-            mode="outlined"
-            onPress={handleCategories}
-            style={styles.actionButton}
-            icon="tag"
-          >
-            Browse Categories
-          </Button>
-          <Button
-            mode="outlined"
-            onPress={handleProfile}
-            style={styles.actionButton}
-            icon="account"
-          >
-            Profile
-          </Button>
+      {showBottomNav ? <UserBottomNav activeTab="home" /> : null}
+
+      <Modal visible={filterVisible} transparent animationType="none" onRequestClose={closeFilterPanel}>
+        <View style={styles.filterModalRoot}>
+          <Animated.View style={[styles.filterPanel, { transform: [{ translateX: filterSlideAnim }] }]}>
+            <Text variant="titleMedium" style={styles.filterTitle}>
+              Filters
+            </Text>
+
+            <Text variant="bodySmall" style={styles.filterLabel}>
+              Sort by
+            </Text>
+            <Chip
+              selected={sortBy === 'price_low_high'}
+              style={styles.filterChip}
+              onPress={() => setSortBy('price_low_high')}
+            >
+              Price low to high
+            </Chip>
+            <Chip
+              selected={sortBy === 'price_high_low'}
+              style={styles.filterChip}
+              onPress={() => setSortBy('price_high_low')}
+            >
+              Price high to low
+            </Chip>
+
+            <Text variant="bodySmall" style={styles.filterLabel}>
+              Max price
+            </Text>
+            <Chip
+              selected={maxPrice === 50000}
+              style={styles.filterChip}
+              onPress={() => setMaxPrice(50000)}
+            >
+              Price below 50000
+            </Chip>
+            <Chip
+              selected={maxPrice === 100000}
+              style={styles.filterChip}
+              onPress={() => setMaxPrice(100000)}
+            >
+              Price below 100000
+            </Chip>
+            <Chip
+              selected={maxPrice === 500000}
+              style={styles.filterChip}
+              onPress={() => setMaxPrice(500000)}
+            >
+              Price below 500000
+            </Chip>
+
+            <View style={styles.filterActionRow}>
+              <Button mode="outlined" onPress={clearFilters} style={styles.filterActionBtn}>
+                Clear
+              </Button>
+              <Button mode="contained" onPress={closeFilterPanel} style={styles.filterActionBtn}>
+                Apply
+              </Button>
+            </View>
+          </Animated.View>
+          <Pressable style={styles.filterBackdrop} onPress={closeFilterPanel} />
         </View>
-      </View>
-
-      {/* User Stats */}
-      <View style={styles.section}>
-        <Text variant="titleMedium" style={styles.sectionTitle}>
-          Your Stats
-        </Text>
-        <View style={styles.statsContainer}>
-          <Card style={styles.statCard}>
-            <Card.Content style={styles.statContent}>
-              <Text variant="titleLarge" style={styles.statNumber}>
-                0
-              </Text>
-              <Text variant="bodyMedium" style={styles.statLabel}>
-                Active Listings
-              </Text>
-            </Card.Content>
-          </Card>
-          <Card style={styles.statCard}>
-            <Card.Content style={styles.statContent}>
-              <Text variant="titleLarge" style={styles.statNumber}>
-                0
-              </Text>
-              <Text variant="bodyMedium" style={styles.statLabel}>
-                Messages
-              </Text>
-            </Card.Content>
-          </Card>
-          <Card style={styles.statCard}>
-            <Card.Content style={styles.statContent}>
-              <Text variant="titleLarge" style={styles.statNumber}>
-                0
-              </Text>
-              <Text variant="bodyMedium" style={styles.statLabel}>
-                Favorites
-              </Text>
-            </Card.Content>
-          </Card>
-        </View>
-      </View>
-
-      {/* Account Actions */}
-      <View style={styles.section}>
-        <Text variant="titleMedium" style={styles.sectionTitle}>
-          Account
-        </Text>
-        <List.Section>
-          <List.Item
-            title="Profile Settings"
-            description="Update your profile information"
-            left={(props) => <List.Icon {...props} icon="account-cog" />}
-            onPress={handleProfile}
-            style={styles.listItem}
-          />
-          <List.Item
-            title="Security"
-            description="Change password and security settings"
-            left={(props) => <List.Icon {...props} icon="security" />}
-            onPress={() => navigation.navigate('Security')}
-            style={styles.listItem}
-          />
-          <List.Item
-            title="Help & Support"
-            description="Get help and support"
-            left={(props) => <List.Icon {...props} icon="help-circle" />}
-            onPress={() => navigation.navigate('Help')}
-            style={styles.listItem}
-          />
-          <List.Item
-            title="Logout"
-            description="Sign out of your account"
-            left={(props) => <List.Icon {...props} icon="logout" />}
-            onPress={handleLogout}
-            style={[styles.listItem, styles.logoutItem]}
-          />
-        </List.Section>
-      </View>
-
-      {/* Floating Action Button for adding listings */}
-      <FAB
-        style={styles.fab}
-        icon="plus"
-        label="Add Listing"
-        onPress={() => navigation.navigate('CreateListing')}
-      />
-    </ScrollView>
+      </Modal>
+    </View>
   );
 };
 
@@ -238,92 +464,174 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#f5f5f5',
+    paddingTop: 12,
   },
-  welcomeSection: {
-    padding: 20,
-    backgroundColor: '#fff',
-    marginBottom: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  welcomeText: {
-    marginLeft: 16,
+  content: {
     flex: 1,
   },
-  userName: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 4,
+  contentContainer: {
+    paddingBottom: 96,
   },
-  userEmail: {
-    color: '#666',
-    marginBottom: 8,
+  appHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 10,
+    marginBottom: 6,
   },
-  userRole: {
-    backgroundColor: '#e8f5e9',
-    borderColor: '#4caf50',
+  appName: {
+    fontWeight: '700',
+    color: '#222',
   },
-  section: {
+  locationButton: {
+    margin: 0,
+  },
+  topBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+  },
+  searchBar: {
+    flex: 1,
+    marginRight: 4,
+    borderRadius: 10,
+  },
+  topIconButton: {
+    margin: 0,
+  },
+  categoryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    marginTop: 10,
+  },
+  filterButton: {
+    margin: 0,
+    marginRight: 6,
     backgroundColor: '#fff',
-    marginBottom: 10,
-    padding: 16,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+  },
+  categoryButton: {
+    marginRight: 8,
+    backgroundColor: '#6200ea',
+    borderRadius: 4,
+  },
+  categoryList: {
+    paddingRight: 10,
+  },
+  categoryChip: {
+    marginRight: 8,
+    backgroundColor: '#fff',
+    borderRadius: 4,
+  },
+  selectedCategoryChip: {
+    backgroundColor: '#e3f2fd',
+  },
+  recommendedSection: {
+    marginTop: 14,
+    paddingHorizontal: 10,
   },
   sectionTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginBottom: 12,
-    color: '#333',
-  },
-  actionButtons: {
-    gap: 10,
-  },
-  actionButton: {
+    fontWeight: '700',
+    color: '#222',
     marginBottom: 8,
   },
-  statsContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  statCard: {
-    flex: 1,
-    marginHorizontal: 4,
-  },
-  statContent: {
-    alignItems: 'center',
-  },
-  statNumber: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#6200ea',
-  },
-  statLabel: {
-    fontSize: 12,
+  sectionSubtitle: {
     color: '#666',
     marginTop: 4,
-    textAlign: 'center',
+    marginBottom: 10,
   },
-  listItem: {
-    backgroundColor: '#fff',
-    marginBottom: 1,
+  postCard: {
+    width: 240,
+    marginRight: 10,
+    marginBottom: 10,
+    borderRadius: 8,
+    overflow: 'hidden',
   },
-  logoutItem: {
-    backgroundColor: '#ffebee',
-    borderColor: '#f44336',
+  userPostCard: {
+    width: '48%',
+    marginBottom: 10,
+    borderRadius: 8,
+    overflow: 'hidden',
   },
-  fab: {
+  userGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+  },
+  postImage: {
+    width: '100%',
+    height: 130,
+    backgroundColor: '#eee',
+  },
+  postImageWrap: {
+    position: 'relative',
+  },
+  wishlistIcon: {
     position: 'absolute',
-    margin: 16,
-    right: 0,
-    bottom: 0,
-    backgroundColor: '#6200ea',
+    top: 2,
+    right: 2,
+    margin: 0,
+    backgroundColor: 'rgba(0,0,0,0.35)',
   },
-  loadingCard: {
-    margin: 20,
-    alignItems: 'center',
+  recommendedList: {
+    paddingRight: 10,
   },
-  loadingText: {
-    marginTop: 20,
+  postTitle: {
+    fontWeight: '600',
+    color: '#222',
+  },
+  postMeta: {
+    marginTop: 6,
+    color: '#666',
+  },
+  emptyCard: {
+    borderRadius: 8,
+  },
+  emptyTitle: {
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  emptyText: {
+    color: '#666',
+  },
+  filterModalRoot: {
+    flex: 1,
+    flexDirection: 'row',
+    paddingTop: 118,
+    paddingBottom: 86,
+  },
+  filterBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.20)',
+  },
+  filterPanel: {
+    width: 240,
+    backgroundColor: 'rgba(255,255,255,0.94)',
+    padding: 14,
+    borderRightWidth: 1,
+    borderRightColor: 'rgba(0,0,0,0.08)',
+  },
+  filterTitle: {
+    fontWeight: '700',
+    marginBottom: 10,
+  },
+  filterLabel: {
+    color: '#666',
+    marginTop: 10,
+    marginBottom: 6,
+  },
+  filterChip: {
+    marginBottom: 8,
+  },
+  filterActionRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 12,
+  },
+  filterActionBtn: {
+    width: '48%',
   },
 });
 

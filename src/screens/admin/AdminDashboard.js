@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import {
   View,
   StyleSheet,
-  Alert,
   ScrollView,
   RefreshControl,
 } from 'react-native';
@@ -10,60 +9,38 @@ import {
   Card,
   Text,
   Button,
-  Avatar,
   Chip,
-  List,
-  FAB,
   Surface,
 } from 'react-native-paper';
-import { authService } from '../../services/auth';
 import { useNavigation } from '@react-navigation/native';
+import { useRoute } from '@react-navigation/native';
+import { categoryService } from '../../services/category';
+import AdminBottomNav from '../../components/AdminBottomNav';
 
 const AdminDashboard = () => {
   const navigation = useNavigation();
-  const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(false);
+  const route = useRoute();
+  const activeTab = route.params?.activeTab || 'main';
   const [refreshing, setRefreshing] = useState(false);
+  const [categories, setCategories] = useState([]);
 
   useEffect(() => {
-    loadUserData();
+    loadCategories();
   }, []);
-
-  const loadUserData = async () => {
-    try {
-      const userData = await authService.getCurrentUser();
-      setUser(userData);
-    } catch (error) {
-      console.error('Error loading user data:', error);
-    }
-  };
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await loadUserData();
+    await loadCategories();
     setRefreshing(false);
   };
 
-  const handleLogout = async () => {
-    Alert.alert(
-      'Logout',
-      'Are you sure you want to logout?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Logout',
-          style: 'destructive',
-          onPress: async () => {
-            const result = await authService.logout();
-            if (result.success) {
-              navigation.replace('Login');
-            } else {
-              Alert.alert('Error', 'Failed to logout. Please try again.');
-            }
-          },
-        },
-      ]
-    );
+  const loadCategories = async () => {
+    const result = await categoryService.getCategories();
+    if (result.success) {
+      setCategories(result.categories);
+      return;
+    }
+    setCategories([]);
   };
 
   const handleUserManagement = () => {
@@ -86,40 +63,39 @@ const AdminDashboard = () => {
     navigation.navigate('Reports');
   };
 
-  if (!user) {
-    return (
-      <View style={styles.container}>
-        <Card style={styles.loadingCard}>
-          <Card.Content>
-            <Text variant="titleLarge" style={styles.loadingText}>
-              Loading...
-            </Text>
-          </Card.Content>
-        </Card>
-      </View>
-    );
-  }
+  const handleListItemForSell = () => {
+    navigation.navigate('AdminCreateListing');
+  };
+
+  const handleViewListedItems = () => {
+    navigation.navigate('AdminListedItems');
+  };
 
   return (
-    <ScrollView
-      style={styles.container}
-      refreshControl={
-        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-      }
-    >
-      {/* Welcome Section */}
-      <View style={styles.welcomeSection}>
-        <Avatar.Text size={64} label={`${user.name?.charAt(0) || 'A'}`} />
-        <View style={styles.welcomeText}>
-          <Text variant="titleLarge" style={styles.userName}>
-            Welcome, {user.name || 'Admin'}
-          </Text>
-          <Text variant="bodyMedium" style={styles.userEmail}>
-            {user.email}
-          </Text>
-          <Chip icon="shield-star" style={styles.adminRole}>
-            Admin
-          </Chip>
+    <View style={styles.container}>
+      <ScrollView
+        style={styles.scrollView}
+        contentContainerStyle={styles.contentContainer}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+        }
+      >
+      <View style={styles.section}>
+        <Text variant="titleMedium" style={styles.sectionTitle}>
+          Categories
+        </Text>
+        <View style={styles.categoryWrap}>
+          {categories.length === 0 ? (
+            <Text variant="bodySmall" style={styles.emptyCategoryText}>
+              No categories yet. Add from Category Management.
+            </Text>
+          ) : (
+            categories.map((category) => (
+              <Chip key={category.$id} style={styles.categoryChip} icon="tag-outline">
+                {category.name}
+              </Chip>
+            ))
+          )}
         </View>
       </View>
 
@@ -198,6 +174,34 @@ const AdminDashboard = () => {
               View user reports
             </Text>
           </Surface>
+
+          <Surface style={styles.adminActionCard} elevation={2}>
+            <Button
+              mode="contained"
+              onPress={handleListItemForSell}
+              style={[styles.adminActionButton, styles.sellButton]}
+              icon="cart-plus"
+            >
+              List Item
+            </Button>
+            <Text variant="bodySmall" style={styles.actionDescription}>
+              Create item listing for sale
+            </Text>
+          </Surface>
+
+          <Surface style={styles.adminActionCard} elevation={2}>
+            <Button
+              mode="contained"
+              onPress={handleViewListedItems}
+              style={[styles.adminActionButton, styles.viewItemsButton]}
+              icon="view-list"
+            >
+              View Listings
+            </Button>
+            <Text variant="bodySmall" style={styles.actionDescription}>
+              See all admin listed items
+            </Text>
+          </Surface>
         </View>
       </View>
 
@@ -240,58 +244,10 @@ const AdminDashboard = () => {
         </View>
       </View>
 
-      {/* Quick Actions */}
-      <View style={styles.section}>
-        <Text variant="titleMedium" style={styles.sectionTitle}>
-          Quick Actions
-        </Text>
-        <List.Section>
-          <List.Item
-            title="System Settings"
-            description="Configure platform settings"
-            left={(props) => <List.Icon {...props} icon="cog" />}
-            onPress={() => navigation.navigate('SystemSettings')}
-            style={styles.listItem}
-          />
-          <List.Item
-            title="Backup & Restore"
-            description="Manage data backups"
-            left={(props) => <List.Icon {...props} icon="database" />}
-            onPress={() => navigation.navigate('BackupRestore')}
-            style={styles.listItem}
-          />
-          <List.Item
-            title="Security Logs"
-            description="View security events"
-            left={(props) => <List.Icon {...props} icon="security" />}
-            onPress={() => navigation.navigate('SecurityLogs')}
-            style={styles.listItem}
-          />
-          <List.Item
-            title="Help & Support"
-            description="Admin help and documentation"
-            left={(props) => <List.Icon {...props} icon="help-circle" />}
-            onPress={() => navigation.navigate('AdminHelp')}
-            style={styles.listItem}
-          />
-          <List.Item
-            title="Logout"
-            description="Sign out of admin account"
-            left={(props) => <List.Icon {...props} icon="logout" />}
-            onPress={handleLogout}
-            style={[styles.listItem, styles.logoutItem]}
-          />
-        </List.Section>
-      </View>
+      </ScrollView>
 
-      {/* Floating Action Button */}
-      <FAB
-        style={styles.fab}
-        icon="shield-check"
-        label="Admin Panel"
-        onPress={() => navigation.navigate('AdminPanel')}
-      />
-    </ScrollView>
+      <AdminBottomNav activeTab={activeTab} />
+    </View>
   );
 };
 
@@ -300,30 +256,11 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#f5f5f5',
   },
-  welcomeSection: {
-    padding: 20,
-    backgroundColor: '#fff',
-    marginBottom: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  welcomeText: {
-    marginLeft: 16,
+  scrollView: {
     flex: 1,
   },
-  userName: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 4,
-  },
-  userEmail: {
-    color: '#666',
-    marginBottom: 8,
-  },
-  adminRole: {
-    backgroundColor: '#fff3e0',
-    borderColor: '#ff9800',
+  contentContainer: {
+    paddingBottom: 90,
   },
   section: {
     backgroundColor: '#fff',
@@ -363,6 +300,12 @@ const styles = StyleSheet.create({
   reportsButton: {
     backgroundColor: '#f57c00',
   },
+  sellButton: {
+    backgroundColor: '#00897b',
+  },
+  viewItemsButton: {
+    backgroundColor: '#5d4037',
+  },
   actionDescription: {
     color: '#666',
     textAlign: 'center',
@@ -390,27 +333,18 @@ const styles = StyleSheet.create({
     marginTop: 4,
     textAlign: 'center',
   },
-  listItem: {
-    backgroundColor: '#fff',
-    marginBottom: 1,
+  categoryWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
   },
-  logoutItem: {
-    backgroundColor: '#ffebee',
-    borderColor: '#f44336',
+  categoryChip: {
+    marginRight: 8,
+    marginBottom: 8,
+    backgroundColor: '#f3e5f5',
+    borderRadius: 4,
   },
-  fab: {
-    position: 'absolute',
-    margin: 16,
-    right: 0,
-    bottom: 0,
-    backgroundColor: '#d32f2f',
-  },
-  loadingCard: {
-    margin: 20,
-    alignItems: 'center',
-  },
-  loadingText: {
-    marginTop: 20,
+  emptyCategoryText: {
+    color: '#666',
   },
 });
 

@@ -232,6 +232,12 @@ const AdminListedItemDetailScreen = () => {
               </Text>
               <Text style={styles.meta}>Category: {item.category || 'General'}</Text>
               <Text style={styles.meta}>Price: Rs. {item.price || 0}</Text>
+              {item.location ? <Text style={styles.meta}>Location: {item.location}</Text> : null}
+              {item.state ? <Text style={styles.meta}>State: {item.state}</Text> : null}
+              {item.district ? <Text style={styles.meta}>District: {item.district}</Text> : null}
+              {item.village ? <Text style={styles.meta}>Village/Town: {item.village}</Text> : null}
+              {item.area ? <Text style={styles.meta}>Area/Landmark: {item.area}</Text> : null}
+              {item.pinCode ? <Text style={styles.meta}>PIN Code: {item.pinCode}</Text> : null}
               <Text style={styles.meta}>Description:</Text>
               <Text style={styles.description}>{item.description || 'No description'}</Text>
               <Text style={styles.meta}>

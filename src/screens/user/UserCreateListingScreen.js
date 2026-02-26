@@ -1,31 +1,75 @@
 import React, { useEffect, useState } from 'react';
-import { View, StyleSheet, ScrollView, Alert, Image } from 'react-native';
+import { View, StyleSheet, ScrollView, Alert, Image, Modal, Pressable } from 'react-native';
 import { Card, Text, TextInput, Button, Chip, IconButton } from 'react-native-paper';
 import * as ImagePicker from 'expo-image-picker';
+import * as Location from 'expo-location';
 import { ID } from 'react-native-appwrite';
+import MapView, { Marker } from 'react-native-maps';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import {
   databases,
   DATABASE_ID,
   POSTS_COLLECTION_ID,
   storage,
   LISTING_IMAGES_BUCKET_ID,
+  getStorageFileViewUrl,
 } from '../../services/appwrite';
 import { categoryService } from '../../services/category';
 import { authService } from '../../services/auth';
 import UserBottomNav from '../../components/UserBottomNav';
 
 const UserCreateListingScreen = () => {
+  const navigation = useNavigation();
+  const route = useRoute();
+  const editPost = route.params?.editPost || null;
+  const isEditMode = !!editPost?.$id;
+
   const [title, setTitle] = useState('');
   const [price, setPrice] = useState('');
+  const [location, setLocation] = useState('');
   const [description, setDescription] = useState('');
   const [categories, setCategories] = useState([]);
   const [selectedCategory, setSelectedCategory] = useState('');
   const [selectedImages, setSelectedImages] = useState([]);
   const [submitting, setSubmitting] = useState(false);
+  const [locationModalVisible, setLocationModalVisible] = useState(false);
+  const [showAddressFields, setShowAddressFields] = useState(false);
+  const [stateName, setStateName] = useState('');
+  const [district, setDistrict] = useState('');
+  const [village, setVillage] = useState('');
+  const [area, setArea] = useState('');
+  const [pinCode, setPinCode] = useState('');
+  const [existingImageIds, setExistingImageIds] = useState([]);
+  const [selectedCoords, setSelectedCoords] = useState(null);
+  const [mapRegion, setMapRegion] = useState({
+    latitude: 26.7509,
+    longitude: 94.2037,
+    latitudeDelta: 0.08,
+    longitudeDelta: 0.08,
+  });
 
   useEffect(() => {
     loadCategories();
   }, []);
+
+  useEffect(() => {
+    if (!isEditMode) return;
+
+    setTitle(editPost.title || '');
+    setPrice((editPost.price ?? '').toString());
+    setLocation(editPost.location || '');
+    setDescription(editPost.description || '');
+    setSelectedCategory(editPost.category || '');
+    setStateName(editPost.state || '');
+    setDistrict(editPost.district || '');
+    setVillage(editPost.village || '');
+    setArea(editPost.area || '');
+    setPinCode(editPost.pinCode || '');
+    setShowAddressFields(
+      !!(editPost.state || editPost.district || editPost.village || editPost.area || editPost.pinCode)
+    );
+    setExistingImageIds(parseImageIds(editPost.imageIds));
+  }, [isEditMode, editPost]);
 
   const loadCategories = async () => {
     const result = await categoryService.getCategories();
@@ -39,9 +83,37 @@ const UserCreateListingScreen = () => {
   const resetForm = () => {
     setTitle('');
     setPrice('');
+    setLocation('');
     setDescription('');
     setSelectedCategory('');
     setSelectedImages([]);
+    setShowAddressFields(false);
+    setStateName('');
+    setDistrict('');
+    setVillage('');
+    setArea('');
+    setPinCode('');
+    setExistingImageIds([]);
+    setSelectedCoords(null);
+  };
+
+  const buildAddressLabel = () =>
+    [village.trim(), area.trim(), district.trim(), stateName.trim(), pinCode.trim()]
+      .filter(Boolean)
+      .join(', ');
+
+  const parseImageIds = (value) => {
+    if (!value) return [];
+    if (Array.isArray(value)) return value;
+    if (typeof value === 'string') {
+      try {
+        const parsed = JSON.parse(value);
+        return Array.isArray(parsed) ? parsed : [];
+      } catch (error) {
+        return [];
+      }
+    }
+    return [];
   };
 
   const pickImage = async () => {
@@ -65,6 +137,69 @@ const UserCreateListingScreen = () => {
 
   const removeImage = (indexToRemove) => {
     setSelectedImages((prev) => prev.filter((_, index) => index !== indexToRemove));
+  };
+
+  const removeExistingImage = (imageId) => {
+    setExistingImageIds((prev) => prev.filter((id) => id !== imageId));
+  };
+
+  const reverseGeocodeToLabel = async (latitude, longitude) => {
+    try {
+      const places = await Location.reverseGeocodeAsync({ latitude, longitude });
+      const place = places?.[0];
+      if (!place) return '';
+      const label = [place.name, place.city || place.subregion, place.region]
+        .filter(Boolean)
+        .join(', ');
+      return label || '';
+    } catch (error) {
+      return '';
+    }
+  };
+
+  const openLocationModal = async () => {
+    setLocationModalVisible(true);
+    const permission = await Location.requestForegroundPermissionsAsync();
+    if (permission.status !== 'granted') {
+      return;
+    }
+
+    try {
+      const current = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      });
+      const latitude = current.coords.latitude;
+      const longitude = current.coords.longitude;
+      setMapRegion((prev) => ({
+        ...prev,
+        latitude,
+        longitude,
+      }));
+      if (!selectedCoords) {
+        setSelectedCoords({ latitude, longitude });
+      }
+      if (!location.trim()) {
+        const label = await reverseGeocodeToLabel(latitude, longitude);
+        if (label) setLocation(label);
+      }
+    } catch (error) {
+      // Keep default region if GPS fetch fails.
+    }
+  };
+
+  const onMapPress = async (event) => {
+    const { latitude, longitude } = event.nativeEvent.coordinate;
+    setSelectedCoords({ latitude, longitude });
+    const label = await reverseGeocodeToLabel(latitude, longitude);
+    if (label) setLocation(label);
+  };
+
+  const confirmLocation = () => {
+    if (!location.trim()) {
+      Alert.alert('Validation', 'Please select on map or enter address manually.');
+      return;
+    }
+    setLocationModalVisible(false);
   };
 
   const uploadImages = async () => {
@@ -99,7 +234,15 @@ const UserCreateListingScreen = () => {
 
   const handleCreateListing = async () => {
     const trimmedTitle = title.trim();
+    const trimmedLocation = location.trim();
+    const addressLocation = buildAddressLabel();
+    const finalLocation = trimmedLocation || addressLocation;
     const trimmedDescription = description.trim();
+    const trimmedState = stateName.trim();
+    const trimmedDistrict = district.trim();
+    const trimmedVillage = village.trim();
+    const trimmedArea = area.trim();
+    const trimmedPinCode = pinCode.trim();
     const numericPrice = Number(price);
 
     if (!trimmedTitle) {
@@ -114,6 +257,10 @@ const UserCreateListingScreen = () => {
       Alert.alert('Validation', 'Please enter a valid price.');
       return;
     }
+    if (!finalLocation) {
+      Alert.alert('Validation', 'Please select location or add address.');
+      return;
+    }
     if (!POSTS_COLLECTION_ID) {
       Alert.alert(
         'Posts Collection Missing',
@@ -126,6 +273,32 @@ const UserCreateListingScreen = () => {
     try {
       const currentUser = await authService.getCurrentUser();
       const uploadedImageIds = await uploadImages();
+      const finalImageIds = [...existingImageIds, ...uploadedImageIds];
+
+      if (isEditMode) {
+        await databases.updateDocument(
+          DATABASE_ID,
+          POSTS_COLLECTION_ID,
+          editPost.$id,
+          {
+            title: trimmedTitle,
+            category: selectedCategory,
+            price: numericPrice,
+            location: finalLocation,
+            state: trimmedState,
+            district: trimmedDistrict,
+            village: trimmedVillage,
+            area: trimmedArea,
+            pinCode: trimmedPinCode,
+            description: trimmedDescription,
+            imageIds: JSON.stringify(finalImageIds),
+          }
+        );
+
+        Alert.alert('Success', 'Item updated successfully.');
+        navigation.replace('MyPosts');
+        return;
+      }
 
       await databases.createDocument(
         DATABASE_ID,
@@ -135,12 +308,18 @@ const UserCreateListingScreen = () => {
           title: trimmedTitle,
           category: selectedCategory,
           price: numericPrice,
+          location: finalLocation,
+          state: trimmedState,
+          district: trimmedDistrict,
+          village: trimmedVillage,
+          area: trimmedArea,
+          pinCode: trimmedPinCode,
           description: trimmedDescription,
           role: 'user',
           createdByRole: 'user',
           isAdminPost: false,
           createdBy: currentUser?.$id || '',
-          imageIds: JSON.stringify(uploadedImageIds),
+          imageIds: JSON.stringify(finalImageIds),
         }
       );
 
@@ -159,7 +338,7 @@ const UserCreateListingScreen = () => {
         <Card style={styles.card}>
           <Card.Content>
             <Text variant="titleMedium" style={styles.heading}>
-              List Item for Sell
+              {isEditMode ? 'Update Item' : 'List Item for Sell'}
             </Text>
 
             <TextInput
@@ -178,6 +357,78 @@ const UserCreateListingScreen = () => {
               onChangeText={setPrice}
               style={styles.input}
             />
+
+            <Button mode="outlined" icon="map-marker-outline" onPress={openLocationModal} style={styles.input}>
+              Select Location
+            </Button>
+            <Button
+              mode="outlined"
+              icon="home-map-marker"
+              onPress={() => setShowAddressFields((prev) => !prev)}
+              style={styles.input}
+            >
+              Add Address
+            </Button>
+
+            {showAddressFields ? (
+              <View style={styles.addressBox}>
+                <TextInput
+                  mode="outlined"
+                  label="State"
+                  value={stateName}
+                  onChangeText={setStateName}
+                  style={styles.input}
+                />
+                <TextInput
+                  mode="outlined"
+                  label="District"
+                  value={district}
+                  onChangeText={setDistrict}
+                  style={styles.input}
+                />
+                <TextInput
+                  mode="outlined"
+                  label="Village / Town"
+                  value={village}
+                  onChangeText={setVillage}
+                  style={styles.input}
+                />
+                <TextInput
+                  mode="outlined"
+                  label="Area / Landmark"
+                  value={area}
+                  onChangeText={setArea}
+                  style={styles.input}
+                />
+                <TextInput
+                  mode="outlined"
+                  label="PIN Code"
+                  keyboardType="number-pad"
+                  value={pinCode}
+                  onChangeText={setPinCode}
+                  style={styles.input}
+                />
+                <Button
+                  mode="contained-tonal"
+                  onPress={() => {
+                    const address = buildAddressLabel();
+                    if (!address) {
+                      Alert.alert('Validation', 'Please fill address fields.');
+                      return;
+                    }
+                    setLocation(address);
+                  }}
+                  style={styles.input}
+                >
+                  Use Address as Location
+                </Button>
+              </View>
+            ) : null}
+            {!!location && (
+              <Text variant="bodySmall" style={styles.selectedLocationText}>
+                Selected: {location}
+              </Text>
+            )}
 
             <Text variant="bodySmall" style={styles.categoryLabel}>
               Select Category
@@ -237,6 +488,29 @@ const UserCreateListingScreen = () => {
                 ))}
               </ScrollView>
             )}
+            {existingImageIds.length > 0 && (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.imageList}
+              >
+                {existingImageIds.map((imageId) => (
+                  <View key={imageId} style={styles.imageItem}>
+                    <Image
+                      source={{ uri: getStorageFileViewUrl(LISTING_IMAGES_BUCKET_ID, imageId) }}
+                      style={styles.previewImage}
+                    />
+                    <IconButton
+                      icon="close-circle"
+                      size={18}
+                      style={styles.removeImageButton}
+                      iconColor="#d32f2f"
+                      onPress={() => removeExistingImage(imageId)}
+                    />
+                  </View>
+                ))}
+              </ScrollView>
+            )}
 
             <Button
               mode="contained"
@@ -244,13 +518,58 @@ const UserCreateListingScreen = () => {
               loading={submitting}
               disabled={submitting}
             >
-              Publish Listing
+              {isEditMode ? 'Update Listing' : 'Publish Listing'}
             </Button>
           </Card.Content>
         </Card>
       </ScrollView>
 
       <UserBottomNav activeTab="sell" />
+
+      <Modal
+        visible={locationModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setLocationModalVisible(false)}
+      >
+        <View style={styles.locationModalRoot}>
+          <Pressable style={styles.locationBackdrop} onPress={() => setLocationModalVisible(false)} />
+          <View style={styles.locationModalCard}>
+            <View style={styles.locationModalHeader}>
+              <Text variant="titleMedium" style={styles.heading}>
+                Choose Location
+              </Text>
+              <IconButton icon="close" onPress={() => setLocationModalVisible(false)} />
+            </View>
+
+            <MapView
+              style={styles.map}
+              region={mapRegion}
+              onRegionChangeComplete={setMapRegion}
+              onPress={onMapPress}
+            >
+              {selectedCoords ? <Marker coordinate={selectedCoords} /> : null}
+            </MapView>
+
+            <TextInput
+              mode="outlined"
+              label="Address (manual)"
+              value={location}
+              onChangeText={setLocation}
+              style={styles.locationManualInput}
+            />
+
+            <View style={styles.locationActionRow}>
+              <Button mode="outlined" onPress={() => setLocationModalVisible(false)} style={styles.locationActionBtn}>
+                Cancel
+              </Button>
+              <Button mode="contained" onPress={confirmLocation} style={styles.locationActionBtn}>
+                Use This
+              </Button>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 };
@@ -318,6 +637,55 @@ const styles = StyleSheet.create({
     right: -8,
     margin: 0,
     backgroundColor: '#fff',
+  },
+  selectedLocationText: {
+    marginBottom: 10,
+    color: '#444',
+  },
+  addressBox: {
+    padding: 10,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    borderRadius: 8,
+    marginBottom: 10,
+    backgroundColor: '#fafafa',
+  },
+  locationModalRoot: {
+    flex: 1,
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+  },
+  locationModalCard: {
+    backgroundColor: '#fff',
+    borderRadius: 10,
+    padding: 10,
+    maxHeight: '80%',
+  },
+  locationModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 6,
+  },
+  map: {
+    width: '100%',
+    height: 280,
+    borderRadius: 8,
+    marginBottom: 10,
+  },
+  locationManualInput: {
+    marginBottom: 10,
+  },
+  locationActionRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  locationActionBtn: {
+    width: '48%',
+  },
+  locationBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.25)',
   },
 });
 

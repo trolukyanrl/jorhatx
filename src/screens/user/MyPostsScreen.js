@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { View, StyleSheet, ScrollView, Image, RefreshControl } from 'react-native';
 import { Card, Text } from 'react-native-paper';
 import { Query } from 'react-native-appwrite';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import {
   databases,
   DATABASE_ID,
@@ -22,6 +22,12 @@ const MyPostsScreen = () => {
   useEffect(() => {
     loadMyPosts();
   }, []);
+
+  useFocusEffect(
+    React.useCallback(() => {
+      loadMyPosts();
+    }, [])
+  );
 
   const loadMyPosts = async () => {
     try {

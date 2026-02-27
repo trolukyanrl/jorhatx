@@ -66,6 +66,40 @@ const createDocumentWithPermissionFallback = async ({
   }
 };
 
+const updateDocumentWithPermissionFallback = async ({
+  collectionId,
+  documentId,
+  data,
+  permissions,
+}) => {
+  try {
+    return await databases.updateDocument(
+      DATABASE_ID,
+      collectionId,
+      documentId,
+      data,
+      permissions
+    );
+  } catch (error) {
+    const message = (error?.message || '').toLowerCase();
+    const isPermissionIssue =
+      message.includes('permission') ||
+      message.includes('permissions') ||
+      message.includes('document security');
+
+    if (!isPermissionIssue) {
+      throw error;
+    }
+
+    return databases.updateDocument(
+      DATABASE_ID,
+      collectionId,
+      documentId,
+      data
+    );
+  }
+};
+
 const normalizeThreadDoc = (doc) => ({
   $id: doc.$id,
   threadId: doc.threadKey,
@@ -216,6 +250,7 @@ export const chatService = {
       text: doc.text || '',
       createdAt: doc.$createdAt,
       isRead: !!doc.isRead,
+      status: doc.status || 'sent', // Use existing status column or default to 'sent'
     }));
   },
 
@@ -242,6 +277,7 @@ export const chatService = {
         receiverId: receiverId || '',
         text: trimmed,
         isRead: false,
+        status: 'sent', // Message status: sent, delivered, read
       },
       permissions: messagePermissions,
     });
@@ -265,6 +301,164 @@ export const chatService = {
       text: messageDoc.text || '',
       createdAt: messageDoc.$createdAt,
       isRead: !!messageDoc.isRead,
+      status: messageDoc.status || 'sent',
     };
+  },
+
+  // Typing indicators functionality
+  async setTypingStatus({ threadId, userId, isTyping }) {
+    if (!threadId || !userId || !CHAT_THREADS_COLLECTION_ID) return null;
+
+    const thread = await findThreadByKey(threadId);
+    if (!thread) return null;
+
+    const typingData = {
+      typingStatus: isTyping ? JSON.stringify({
+        typingUserId: userId,
+        typingAt: new Date().toISOString()
+      }) : '',
+    };
+
+    const threadPermissions = buildParticipantPermissions(thread.participants);
+    try {
+      const updatedThread = await updateDocumentWithPermissionFallback({
+        collectionId: CHAT_THREADS_COLLECTION_ID,
+        documentId: thread.$id,
+        data: typingData,
+        permissions: threadPermissions,
+      });
+
+      const typingInfo = updatedThread.typingStatus ? JSON.parse(updatedThread.typingStatus) : null;
+      return {
+        threadId: updatedThread.threadKey,
+        isTyping: !!typingInfo?.typingUserId,
+        typingUserId: typingInfo?.typingUserId || '',
+        typingAt: typingInfo?.typingAt || '',
+      };
+    } catch (error) {
+      // If typingStatus column doesn't exist yet, just return success without updating
+      return {
+        threadId,
+        isTyping,
+        typingUserId: isTyping ? userId : '',
+        typingAt: isTyping ? new Date().toISOString() : '',
+      };
+    }
+  },
+
+  async getTypingStatus(threadId) {
+    if (!threadId || !CHAT_THREADS_COLLECTION_ID) return { isTyping: false, typingUserId: '', typingAt: '' };
+
+    const thread = await findThreadByKey(threadId);
+    if (!thread) return { isTyping: false, typingUserId: '', typingAt: '' };
+
+    try {
+      const typingInfo = thread.typingStatus ? JSON.parse(thread.typingStatus) : null;
+      
+      // Check if typing status is recent (within last 3 seconds)
+      const typingAt = typingInfo?.typingAt ? new Date(typingInfo.typingAt) : null;
+      const now = new Date();
+      const isRecent = typingAt && (now.getTime() - typingAt.getTime()) < 3000;
+
+      return {
+        isTyping: isRecent && !!typingInfo?.typingUserId,
+        typingUserId: isRecent ? typingInfo?.typingUserId || '' : '',
+        typingAt: typingInfo?.typingAt || '',
+      };
+    } catch (error) {
+      return { isTyping: false, typingUserId: '', typingAt: '' };
+    }
+  },
+
+  // Message status tracking
+  async markMessageAsDelivered(messageId) {
+    if (!messageId || !CHAT_MESSAGES_COLLECTION_ID) return null;
+
+    const message = await databases.getDocument(DATABASE_ID, CHAT_MESSAGES_COLLECTION_ID, messageId);
+    if (!message) return null;
+
+    const participants = [message.senderId, message.receiverId].filter(Boolean);
+    const messagePermissions = buildParticipantPermissions(participants);
+
+    const updatedMessage = await updateDocumentWithPermissionFallback({
+      collectionId: CHAT_MESSAGES_COLLECTION_ID,
+      documentId: messageId,
+      data: {
+        status: 'delivered',
+      },
+      permissions: messagePermissions,
+    });
+
+    return {
+      $id: updatedMessage.$id,
+      status: updatedMessage.status || 'delivered',
+    };
+  },
+
+  async markMessageAsRead(messageId) {
+    if (!messageId || !CHAT_MESSAGES_COLLECTION_ID) return null;
+
+    const message = await databases.getDocument(DATABASE_ID, CHAT_MESSAGES_COLLECTION_ID, messageId);
+    if (!message) return null;
+
+    const participants = [message.senderId, message.receiverId].filter(Boolean);
+    const messagePermissions = buildParticipantPermissions(participants);
+
+    const updatedMessage = await updateDocumentWithPermissionFallback({
+      collectionId: CHAT_MESSAGES_COLLECTION_ID,
+      documentId: messageId,
+      data: {
+        status: 'read',
+        isRead: true,
+      },
+      permissions: messagePermissions,
+    });
+
+    return {
+      $id: updatedMessage.$id,
+      status: updatedMessage.status || 'read',
+      isRead: !!updatedMessage.isRead,
+    };
+  },
+
+  async markThreadMessagesAsRead(threadId, userId) {
+    if (!threadId || !userId || !CHAT_MESSAGES_COLLECTION_ID) return [];
+
+    const result = await databases.listDocuments(
+      DATABASE_ID,
+      CHAT_MESSAGES_COLLECTION_ID,
+      [
+        Query.equal('threadId', threadId),
+        Query.equal('receiverId', userId),
+        Query.equal('isRead', false),
+        Query.limit(100)
+      ]
+    );
+
+    const messages = result.documents || [];
+    const updatedMessages = [];
+
+    for (const message of messages) {
+      const participants = [message.senderId, message.receiverId].filter(Boolean);
+      const messagePermissions = buildParticipantPermissions(participants);
+
+      const updatedMessage = await updateDocumentWithPermissionFallback({
+        collectionId: CHAT_MESSAGES_COLLECTION_ID,
+        documentId: message.$id,
+        data: {
+          status: 'read',
+          isRead: true,
+        },
+        permissions: messagePermissions,
+      });
+
+      updatedMessages.push({
+        $id: updatedMessage.$id,
+        status: updatedMessage.status || 'read',
+        isRead: !!updatedMessage.isRead,
+      });
+    }
+
+    return updatedMessages;
   },
 };

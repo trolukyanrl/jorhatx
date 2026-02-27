@@ -25,6 +25,7 @@ import AdminHomeScreen from '../screens/admin/AdminHomeScreen';
 import ChatConversationScreen from '../screens/common/ChatConversationScreen';
 import { authService } from '../services/auth';
 import { AuthContext } from '../context/AuthContext';
+import { paperTheme, navigationTheme } from '../theme';
 
 const Stack = createStackNavigator();
 
@@ -74,9 +75,9 @@ const AppNavigator = () => {
   }
 
   return (
-    <PaperProvider>
+    <PaperProvider theme={paperTheme}>
       <AuthContext.Provider value={{ handleLoginSuccess, handleLogout }}>
-        <NavigationContainer>
+        <NavigationContainer theme={navigationTheme}>
           <Stack.Navigator
             screenOptions={{
               headerStyle: {

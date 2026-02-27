@@ -7,8 +7,9 @@ import {
   Platform,
   Image,
   Pressable,
+  Keyboard,
 } from 'react-native';
-import { Avatar, Button, Text, TextInput } from 'react-native-paper';
+import { Avatar, Button, Text, TextInput, IconButton } from 'react-native-paper';
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import { Query } from 'react-native-appwrite';
 import { authService } from '../../services/auth';
@@ -21,6 +22,9 @@ import {
   LISTING_IMAGES_BUCKET_ID,
   getStorageFileViewUrl,
 } from '../../services/appwrite';
+import MessageStatus from '../../components/MessageStatus';
+import TypingIndicator from '../../components/TypingIndicator';
+import EnhancedTimestamp from '../../components/EnhancedTimestamp';
 
 const ChatConversationScreen = () => {
   const navigation = useNavigation();
@@ -33,6 +37,9 @@ const ChatConversationScreen = () => {
   const [errorMessage, setErrorMessage] = useState('');
   const [otherUserName, setOtherUserName] = useState('');
   const [postInfo, setPostInfo] = useState(null);
+  const [typingStatus, setTypingStatus] = useState({ isTyping: false, typingUserId: '', typingAt: '' });
+  const [isTyping, setIsTyping] = useState(false);
+  const [typingTimeout, setTypingTimeout] = useState(null);
   const listRef = useRef(null);
 
   const threadTitle = useMemo(
@@ -269,6 +276,63 @@ const ChatConversationScreen = () => {
     return () => clearTimeout(timer);
   }, [messages]);
 
+  // Typing indicator functionality
+  useEffect(() => {
+    if (!activeThread?.threadId) return;
+
+    const checkTypingStatus = async () => {
+      const status = await chatService.getTypingStatus(activeThread.threadId);
+      setTypingStatus(status);
+    };
+
+    const interval = setInterval(checkTypingStatus, 2000);
+    checkTypingStatus();
+
+    return () => clearInterval(interval);
+  }, [activeThread?.threadId]);
+
+  // Handle typing indicator when user types
+  useEffect(() => {
+    if (!activeThread?.threadId || !currentUserId) return;
+
+    if (messageText.length > 0 && !isTyping) {
+      setIsTyping(true);
+      chatService.setTypingStatus({
+        threadId: activeThread.threadId,
+        userId: currentUserId,
+        isTyping: true,
+      });
+
+      if (typingTimeout) {
+        clearTimeout(typingTimeout);
+      }
+
+      const timeout = setTimeout(() => {
+        setIsTyping(false);
+        chatService.setTypingStatus({
+          threadId: activeThread.threadId,
+          userId: currentUserId,
+          isTyping: false,
+        });
+      }, 2000);
+
+      setTypingTimeout(timeout);
+    }
+  }, [messageText, activeThread?.threadId, currentUserId, isTyping, typingTimeout]);
+
+  // Mark messages as read when user views the conversation
+  useEffect(() => {
+    if (!activeThread?.threadId || !currentUserId) return;
+
+    const markMessagesAsRead = async () => {
+      await chatService.markThreadMessagesAsRead(activeThread.threadId, currentUserId);
+      const threadMessages = await chatService.getMessages(activeThread.threadId);
+      setMessages(threadMessages);
+    };
+
+    markMessagesAsRead();
+  }, [activeThread?.threadId, currentUserId]);
+
   const handleSend = async () => {
     const trimmed = messageText.trim();
     if (!trimmed || !currentUserId) return;
@@ -303,20 +367,31 @@ const ChatConversationScreen = () => {
     return (
       <View style={[styles.messageBubble, isMine ? styles.myMessage : styles.otherMessage]}>
         <Text style={styles.messageText}>{item.text}</Text>
-        <Text style={styles.timeText}>
-          {item.createdAt ? new Date(item.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
-        </Text>
+        <View style={styles.messageFooter}>
+          <EnhancedTimestamp timestamp={item.createdAt} isMine={isMine} />
+          <MessageStatus status={item.status || 'sent'} isMine={isMine} />
+        </View>
       </View>
     );
   };
 
   return (
+    // ✅ FIX 1: Use 'padding' on both platforms so the whole screen shrinks when keyboard opens
     <KeyboardAvoidingView
       style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 14 : 0}
+      behavior="padding"
+      // ✅ FIX 2: Set a proper keyboardVerticalOffset
+      // On iOS this accounts for the navigation header (~56px is common; adjust if needed)
+      // On Android keep it 0 since windowSoftInputMode="adjustResize" usually handles it,
+      // but 'padding' behavior still helps when that isn't set.
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
     >
+      {/* ✅ FIX 3: The outer View is now a pure flex column.
+          Header cards sit at the top, FlatList grows to fill available space,
+          composer stays at the bottom — no absolute positioning needed. */}
       <View style={styles.body}>
+
+        {/* ── User info card ── */}
         <View style={styles.userInfoCard}>
           <Avatar.Text
             size={34}
@@ -332,6 +407,7 @@ const ChatConversationScreen = () => {
           </View>
         </View>
 
+        {/* ── Post info card ── */}
         {postInfo ? (
           <Pressable style={styles.postInfoCard} onPress={handleOpenPostDetail}>
             {postInfo.imageUri ? (
@@ -350,6 +426,7 @@ const ChatConversationScreen = () => {
           </Pressable>
         ) : null}
 
+        {/* ── Main content area (grows to fill remaining space) ── */}
         {loading ? (
           <View style={styles.centerWrap}>
             <Text>Loading conversation...</Text>
@@ -366,29 +443,49 @@ const ChatConversationScreen = () => {
             <Text>Unable to open this conversation.</Text>
           </View>
         ) : (
-          <>
+          // ✅ FIX 4: This inner flex container holds the list + composer in normal flow
+          <View style={styles.chatArea}>
             <FlatList
               ref={listRef}
               data={messages}
               keyExtractor={(item) => item.$id}
               renderItem={renderMessage}
               contentContainerStyle={styles.messageList}
+              // ✅ FIX 5: Tell the list to maintain scroll position when content changes
+              maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
+              ListFooterComponent={
+                <TypingIndicator
+                  isTyping={typingStatus.isTyping && typingStatus.typingUserId !== currentUserId}
+                  typingUserName={otherUserName}
+                />
+              }
             />
 
+            {/* ✅ FIX 6: Composer is in normal document flow at the bottom of the flex column */}
             <View style={styles.composerWrap}>
-              <TextInput
-                mode="outlined"
-                placeholder="Type a message"
-                value={messageText}
-                onChangeText={setMessageText}
-                style={styles.messageInput}
-                multiline
-              />
-              <Button mode="contained" onPress={handleSend}>
-                Send
-              </Button>
+              <View style={styles.inputContainer}>
+                <TextInput
+                  mode="outlined"
+                  placeholder="Type a message"
+                  value={messageText}
+                  onChangeText={setMessageText}
+                  style={styles.messageInput}
+                  multiline
+                  numberOfLines={1}
+                  outlineColor="#e0e0e0"
+                  activeOutlineColor="#4f46e5"
+                />
+                <IconButton
+                  icon="send"
+                  iconColor="#4f46e5"
+                  size={28}
+                  onPress={handleSend}
+                  disabled={!messageText.trim()}
+                  style={styles.sendButton}
+                />
+              </View>
             </View>
-          </>
+          </View>
         )}
       </View>
     </KeyboardAvoidingView>
@@ -403,6 +500,13 @@ const styles = StyleSheet.create({
   body: {
     flex: 1,
     paddingTop: 8,
+    // ✅ flex column so cards + chatArea stack vertically
+    flexDirection: 'column',
+  },
+  // ✅ chatArea takes all remaining space and arranges list + composer in a column
+  chatArea: {
+    flex: 1,
+    flexDirection: 'column',
   },
   centerWrap: {
     flex: 1,
@@ -482,7 +586,7 @@ const styles = StyleSheet.create({
   },
   messageList: {
     padding: 12,
-    paddingBottom: 100,
+    paddingBottom: 8, // ✅ No need for huge bottom padding since composer is in-flow now
   },
   messageBubble: {
     maxWidth: '84%',
@@ -502,11 +606,11 @@ const styles = StyleSheet.create({
   messageText: {
     color: '#222',
   },
-  timeText: {
+  messageFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
     marginTop: 4,
-    color: '#777',
-    fontSize: 11,
-    textAlign: 'right',
   },
   errorText: {
     color: '#c62828',
@@ -516,20 +620,30 @@ const styles = StyleSheet.create({
   retryButton: {
     marginTop: 4,
   },
+  // ✅ FIX: Composer is no longer absolutely positioned — it sits naturally at the bottom
   composerWrap: {
-    position: 'absolute',
-    left: 10,
-    right: 10,
-    bottom: 10,
-    backgroundColor: '#fff',
-    borderWidth: 1,
-    borderColor: '#e0e0e0',
-    borderRadius: 10,
-    padding: 10,
+    backgroundColor: '#f5f5f5',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#e6e6e6',
+  },
+  inputContainer: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
   },
   messageInput: {
-    marginBottom: 8,
+    flex: 1,
+    marginRight: 8,
     backgroundColor: '#fff',
+    borderRadius: 25,
+    // ✅ Remove fixed height so multiline can expand naturally
+    maxHeight: 120,
+  },
+  sendButton: {
+    justifyContent: 'center',
+    backgroundColor: 'transparent',
+    borderRadius: 25,
   },
 });
 

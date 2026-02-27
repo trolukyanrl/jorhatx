@@ -1,0 +1,12 @@
+{
+  "expo": {
+    "extra": {
+      "eas": {
+        "projectId": "5e9c7a04-e0b5-4c73-9e2a-cd4469fcf5d2"
+      }
+    },
+    "android": {
+      "package": "com.trolukyanrl.jorhatxapp"
+    }
+  }
+}
